@@ -1,0 +1,34 @@
+neon-usage
+Copyright 2026 Philip Olson
+
+Unofficial tool; not affiliated with or endorsed by Neon, Inc.
+
+Third-party components
+----------------------
+The bundled dashboard page (dist/dashboard) includes code vendored from:
+
+- Neon UI component registry (https://ui.neon.com,
+  https://github.com/neondatabase/ui), MIT License,
+  Copyright (c) 2026 Databricks, Inc. Vendored under dashboard/src/components/,
+  including the neon-loader (dashboard/src/components/neon-loader/), which
+  renders the Neon brand mark as a loading indicator.
+- shadcn/ui (https://ui.shadcn.com, https://github.com/shadcn-ui/ui),
+  MIT License, Copyright (c) shadcn. Vendored as
+  dashboard/src/components/shadcn-tailwind.css and the shadcn-derived
+  primitives under dashboard/src/components/ui/.
+- Recharts (https://recharts.org), MIT License, bundled as a build
+  dependency of the dashboard page.
+
+The bundled dashboard (`dist/dashboard`) also incorporates React, React DOM,
+and other MIT-licensed packages; the full inventory with reproduced license
+texts is in [THIRD_PARTY_LICENSES](./THIRD_PARTY_LICENSES).
+
+Each of the above is used under the MIT License; see the linked projects
+for their full license texts.
+
+Trademarks
+----------
+"Neon" and the Neon logo/mark are trademarks of Neon, Inc. This project is not
+affiliated with or endorsed by Neon, Inc. The marks are used only to identify
+the service whose consumption this tool reports, and — in the dashboard loading
+indicator — as provided by Neon's own public UI component registry.

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
+  "files": {
+    "includes": [
+      "**",
+      "!dist",
+      "!coverage",
+      "!node_modules",
+      "!dashboard/node_modules",
+      "!dashboard/dist",
+      "!**/*.css",
+      "!dashboard/src/components",
+      "!dashboard/src/hooks"
+    ]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true
+  }
+}

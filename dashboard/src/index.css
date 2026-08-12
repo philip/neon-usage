@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@import "./components/tokens.css";
+
+/* tokens.css switches palettes on a .dark class (not the media query);
+   main.tsx applies the class from the system color-scheme preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}

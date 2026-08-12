@@ -1,0 +1,45 @@
+{
+  "projects": [
+    {
+      "project_id": "project-z",
+      "periods": [
+        {
+          "period_id": "period-z",
+          "period_plan": "scale",
+          "period_start": "2026-08-01T00:00:00Z",
+          "consumption": [
+            {
+              "timeframe_start": "2026-08-07T00:00:00Z",
+              "timeframe_end": "2026-08-08T00:00:00Z",
+              "metrics": [
+                { "metric_name": "root_branch_bytes_month", "value": 1800 },
+                { "metric_name": "compute_unit_seconds", "value": 3600 }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "project_id": "project-a",
+      "periods": [
+        {
+          "period_id": "period-a",
+          "period_plan": "launch",
+          "period_start": "2026-08-01T00:00:00Z",
+          "consumption": [
+            {
+              "timeframe_start": "2026-08-07T00:00:00Z",
+              "timeframe_end": "2026-08-08T00:00:00Z",
+              "metrics": [
+                { "metric_name": "compute_unit_seconds", "value": 7200 },
+                { "metric_name": "root_branch_bytes_month", "value": 900 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pagination": {}
+}

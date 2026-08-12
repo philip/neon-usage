@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-08T12:30:00.000Z",
+  "asOf": "2026-08-08T00:00:00.000Z",
+  "coverage": {
+    "status": "complete",
+    "pageCount": 1,
+    "entityCount": 2,
+    "qualityFlags": []
+  },
+  "query": {
+    "organizationId": "org-1",
+    "from": "2026-08-07T00:00:00Z",
+    "to": "2026-08-08T00:00:00Z",
+    "granularity": "daily",
+    "metrics": [
+      "compute_unit_seconds",
+      "root_branch_bytes_month"
+    ]
+  },
+  "effectiveRange": {
+    "from": "2026-08-07T00:00:00.000Z",
+    "to": "2026-08-08T00:00:00.000Z",
+    "granularity": "daily"
+  },
+  "projects": [
+    {
+      "projectId": "project-a",
+      "periods": [
+        {
+          "id": "period-a",
+          "plan": "launch",
+          "start": "2026-08-01T00:00:00Z",
+          "buckets": [
+            {
+              "start": "2026-08-07T00:00:00Z",
+              "end": "2026-08-08T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "7200",
+                  "rawUnit": "cu_second",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:67f77644a16e84a45eeeda78b617ca7a5be28f88f374bcc0b6c67dcc6241191f",
+                    "sourcePath": "/projects/1/periods/0/consumption/0/metrics/0"
+                  }
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "900",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:67f77644a16e84a45eeeda78b617ca7a5be28f88f374bcc0b6c67dcc6241191f",
+                    "sourcePath": "/projects/1/periods/0/consumption/0/metrics/1"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "projectId": "project-z",
+      "periods": [
+        {
+          "id": "period-z",
+          "plan": "scale",
+          "start": "2026-08-01T00:00:00Z",
+          "buckets": [
+            {
+              "start": "2026-08-07T00:00:00Z",
+              "end": "2026-08-08T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "3600",
+                  "rawUnit": "cu_second",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:67f77644a16e84a45eeeda78b617ca7a5be28f88f374bcc0b6c67dcc6241191f",
+                    "sourcePath": "/projects/0/periods/0/consumption/0/metrics/1"
+                  }
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1800",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:67f77644a16e84a45eeeda78b617ca7a5be28f88f374bcc0b6c67dcc6241191f",
+                    "sourcePath": "/projects/0/periods/0/consumption/0/metrics/0"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

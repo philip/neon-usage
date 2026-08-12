@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "kind": "current_period_snapshot",
+  "historical": false,
+  "generatedAt": "2026-08-09T12:00:00.000Z",
+  "organizationId": "org-free-fixture",
+  "coverage": {
+    "status": "complete",
+    "projectsRequested": 1,
+    "projectsReturned": 1,
+    "errors": []
+  },
+  "projects": [
+    {
+      "projectId": "free-project-1",
+      "period": {
+        "start": "2026-08-10T01:39:32Z",
+        "end": "2026-09-01T00:00:00Z"
+      },
+      "metrics": {
+        "activeTimeSeconds": "0",
+        "computeTimeSeconds": "0",
+        "writtenDataBytes": "0",
+        "dataTransferBytes": "0",
+        "dataStorageByteHours": "0"
+      },
+      "metricEvidence": {
+        "activeTimeSeconds": {
+          "payloadHash": "sha256:a50c767cf25da6e0ac461ebc29e0dda9be261c191a21232d79d934660d1c814d",
+          "sourcePath": "/project/active_time_seconds"
+        },
+        "computeTimeSeconds": {
+          "payloadHash": "sha256:a50c767cf25da6e0ac461ebc29e0dda9be261c191a21232d79d934660d1c814d",
+          "sourcePath": "/project/compute_time_seconds"
+        },
+        "writtenDataBytes": {
+          "payloadHash": "sha256:a50c767cf25da6e0ac461ebc29e0dda9be261c191a21232d79d934660d1c814d",
+          "sourcePath": "/project/written_data_bytes"
+        },
+        "dataTransferBytes": {
+          "payloadHash": "sha256:a50c767cf25da6e0ac461ebc29e0dda9be261c191a21232d79d934660d1c814d",
+          "sourcePath": "/project/data_transfer_bytes"
+        },
+        "dataStorageByteHours": {
+          "payloadHash": "sha256:a50c767cf25da6e0ac461ebc29e0dda9be261c191a21232d79d934660d1c814d",
+          "sourcePath": "/project/data_storage_bytes_hour"
+        }
+      },
+      "branchStorage": {
+        "status": "available",
+        "totalLogicalSizeBytes": "31842304",
+        "branches": [
+          {
+            "branchId": "br-free-fixture-1",
+            "name": "production",
+            "logicalSizeBytes": "31842304",
+            "evidence": {
+              "payloadHash": "sha256:90838eb0e957b854ce44a89d023618464f5513346788de023107f6a290dd55cc",
+              "sourcePath": "/branches/0/logical_size"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

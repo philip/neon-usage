@@ -1,0 +1,932 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-09T12:00:00.000Z",
+  "asOf": "2026-08-09T00:00:00.000Z",
+  "coverage": {
+    "status": "complete",
+    "pageCount": 1,
+    "entityCount": 2,
+    "qualityFlags": [
+      "SOURCE_ZERO_OMITTED"
+    ]
+  },
+  "query": {
+    "organizationId": "org-scale-fixture",
+    "projectIds": [
+      "scale-project-1",
+      "scale-project-2"
+    ],
+    "from": "2026-08-02T00:00:00Z",
+    "to": "2026-08-09T00:00:00Z",
+    "granularity": "daily",
+    "metrics": [
+      "compute_unit_seconds",
+      "root_branch_bytes_month",
+      "child_branch_bytes_month",
+      "instant_restore_bytes_month",
+      "snapshot_storage_bytes_month",
+      "public_network_transfer_bytes",
+      "private_network_transfer_bytes",
+      "extra_branches_month"
+    ]
+  },
+  "effectiveRange": {
+    "from": "2026-08-02T00:00:00.000Z",
+    "to": "2026-08-09T00:00:00.000Z",
+    "granularity": "daily"
+  },
+  "projects": [
+    {
+      "projectId": "scale-project-1",
+      "periods": [
+        {
+          "id": "91b83904-303a-4768-89f9-dc358856ce2f",
+          "plan": "scale",
+          "start": "2026-08-01T00:00:00Z",
+          "buckets": [
+            {
+              "start": "2026-08-02T00:00:00Z",
+              "end": "2026-08-03T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/0/metrics/1"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "8644",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/0/metrics/0"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-03T00:00:00Z",
+              "end": "2026-08-04T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/1/metrics/1"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/1/metrics/0"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-04T00:00:00Z",
+              "end": "2026-08-05T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/2/metrics/0"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/2/metrics/1"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-05T00:00:00Z",
+              "end": "2026-08-06T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/3/metrics/0"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/3/metrics/1"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-06T00:00:00Z",
+              "end": "2026-08-07T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/4/metrics/1"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/4/metrics/0"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-07T00:00:00Z",
+              "end": "2026-08-08T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/5/metrics/1"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/5/metrics/0"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-08T00:00:00Z",
+              "end": "2026-08-09T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/6/metrics/1"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/0/periods/0/consumption/6/metrics/0"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "projectId": "scale-project-2",
+      "periods": [
+        {
+          "id": "91b83904-303a-4768-89f9-dc358856ce2f",
+          "plan": "scale",
+          "start": "2026-08-01T00:00:00Z",
+          "buckets": [
+            {
+              "start": "2026-08-02T00:00:00Z",
+              "end": "2026-08-03T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/0/metrics/1"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "8674",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/0/metrics/0"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-03T00:00:00Z",
+              "end": "2026-08-04T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/1/metrics/0"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/1/metrics/1"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-04T00:00:00Z",
+              "end": "2026-08-05T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/2/metrics/0"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/2/metrics/1"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-05T00:00:00Z",
+              "end": "2026-08-06T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/3/metrics/0"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/3/metrics/1"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-06T00:00:00Z",
+              "end": "2026-08-07T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/4/metrics/0"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/4/metrics/1"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-07T00:00:00Z",
+              "end": "2026-08-08T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/5/metrics/1"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/5/metrics/0"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            },
+            {
+              "start": "2026-08-08T00:00:00Z",
+              "end": "2026-08-09T00:00:00Z",
+              "metrics": [
+                {
+                  "name": "compute_unit_seconds",
+                  "value": "0",
+                  "rawUnit": "cu_second",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "root_branch_bytes_month",
+                  "value": "1009730",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/6/metrics/0"
+                  }
+                },
+                {
+                  "name": "child_branch_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "instant_restore_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "reported",
+                  "evidence": {
+                    "payloadHash": "sha256:0d9e9352b2014209038c6dc4b29139ac55f752e1f049046aebedb4bd3702adaa",
+                    "sourcePath": "/projects/1/periods/0/consumption/6/metrics/1"
+                  }
+                },
+                {
+                  "name": "snapshot_storage_bytes_month",
+                  "value": "0",
+                  "rawUnit": "byte_month",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "public_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "private_network_transfer_bytes",
+                  "value": "0",
+                  "rawUnit": "byte",
+                  "presence": "projected_zero"
+                },
+                {
+                  "name": "extra_branches_month",
+                  "value": "0",
+                  "rawUnit": "branch_hour",
+                  "presence": "projected_zero"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "capturedAt": "2026-08-09",
+  "description": "Sanitized live Neon capture (free-snapshot)",
+  "responses": [
+    {
+      "url": "https://console.neon.tech/api/v2/projects?org_id=org-free-fixture&limit=400",
+      "body": "{\"projects\":[{\"id\":\"free-project-1\",\"platform_id\":\"aws\",\"region_id\":\"aws-us-east-2\",\"name\":\"Free Project 1\",\"provisioner\":\"k8s-neonvm\",\"default_endpoint_settings\":{\"autoscaling_limit_min_cu\":0.25,\"autoscaling_limit_max_cu\":2,\"suspend_timeout_seconds\":0},\"settings\":{\"allowed_ips\":{\"ips\":[],\"protected_branches_only\":false},\"enable_logical_replication\":false,\"maintenance_window\":{\"weekdays\":[5],\"start_time\":\"05:00\",\"end_time\":\"06:00\"},\"block_public_connections\":false,\"block_vpc_connections\":false,\"hipaa\":false},\"pg_version\":18,\"proxy_host\":\"c-5.us-east-2.aws.neon.tech\",\"branch_logical_size_limit\":512,\"branch_logical_size_limit_bytes\":536870912,\"store_passwords\":true,\"active_time\":0,\"cpu_used_sec\":0,\"creation_source\":\"console\",\"created_at\":\"2026-08-10T01:40:29Z\",\"updated_at\":\"2026-08-10T01:40:45Z\",\"synthetic_storage_size\":28487376,\"quota_reset_at\":\"2026-09-01T00:00:00Z\",\"owner_id\":\"org-free-fixture\",\"compute_last_active_at\":\"2026-08-10T01:40:40Z\",\"org_id\":\"org-free-fixture\",\"history_retention_seconds\":21600,\"effective_project_permission\":\"ADMIN\"}],\"pagination\":{\"cursor\":\"free-project-1\"},\"applications\":{},\"integrations\":{}}"
+    },
+    {
+      "url": "https://console.neon.tech/api/v2/projects?org_id=org-free-fixture&limit=400&cursor=free-project-1",
+      "body": "{\"projects\":[],\"pagination\":{\"cursor\":\"free-project-1\"},\"applications\":{},\"integrations\":{}}"
+    },
+    {
+      "url": "https://console.neon.tech/api/v2/projects/free-project-1",
+      "body": "{\"project\":{\"data_storage_bytes_hour\":0,\"data_transfer_bytes\":0,\"written_data_bytes\":0,\"compute_time_seconds\":0,\"active_time_seconds\":0,\"cpu_used_sec\":0,\"id\":\"free-project-1\",\"platform_id\":\"aws\",\"region_id\":\"aws-us-east-2\",\"name\":\"Free Project 1\",\"slug\":\"free-project-1\",\"provisioner\":\"k8s-neonvm\",\"default_endpoint_settings\":{\"autoscaling_limit_min_cu\":0.25,\"autoscaling_limit_max_cu\":2,\"suspend_timeout_seconds\":0},\"settings\":{\"allowed_ips\":{\"ips\":[],\"protected_branches_only\":false},\"enable_logical_replication\":false,\"maintenance_window\":{\"weekdays\":[5],\"start_time\":\"05:00\",\"end_time\":\"06:00\"},\"block_public_connections\":false,\"block_vpc_connections\":false,\"hipaa\":false},\"pg_version\":18,\"proxy_host\":\"c-5.us-east-2.aws.neon.tech\",\"branch_logical_size_limit\":512,\"branch_logical_size_limit_bytes\":536870912,\"store_passwords\":true,\"creation_source\":\"console\",\"history_retention_seconds\":21600,\"created_at\":\"2026-08-10T01:40:29Z\",\"updated_at\":\"2026-08-10T01:40:45Z\",\"synthetic_storage_size\":28487376,\"consumption_period_start\":\"2026-08-10T01:39:32Z\",\"consumption_period_end\":\"2026-09-01T00:00:00Z\",\"owner_id\":\"org-free-fixture\",\"owner\":{\"email\":\"\",\"name\":\"Free Fixture Org\",\"branches_limit\":10,\"subscription_type\":\"free_v3\"},\"compute_last_active_at\":\"2026-08-10T01:40:40Z\",\"org_id\":\"org-free-fixture\",\"effective_project_permission\":\"ADMIN\"}}"
+    },
+    {
+      "url": "https://console.neon.tech/api/v2/projects/free-project-1/branches?limit=100&sort_by=created_at&sort_order=asc",
+      "body": "{\"branches\":[{\"id\":\"br-free-fixture-1\",\"project_id\":\"free-project-1\",\"name\":\"production\",\"slug\":\"br-free-fixture-1\",\"project_slug\":\"free-project-1\",\"current_state\":\"ready\",\"state_changed_at\":\"2026-08-10T01:40:30Z\",\"logical_size\":31842304,\"creation_source\":\"console\",\"primary\":true,\"default\":true,\"protected\":false,\"cpu_used_sec\":0,\"compute_time_seconds\":0,\"active_time_seconds\":0,\"written_data_bytes\":0,\"data_transfer_bytes\":0,\"created_at\":\"2026-08-10T01:40:29Z\",\"updated_at\":\"2026-08-10T01:49:51Z\",\"created_by\":{\"name\":\"Fixture User\"},\"init_source\":\"parent-data\"}],\"annotations\":{\"br-free-fixture-1\":{\"object\":{\"type\":\"console/branch\",\"id\":\"br-free-fixture-1\"},\"value\":{\"environment\":\"production\"},\"created_at\":\"2026-08-10T01:40:29Z\",\"updated_at\":\"2026-08-10T01:40:29Z\"}},\"pagination\":{\"sort_by\":\"created_at\",\"sort_order\":\"ASC\"}}"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# Neon config file
+.neon
+
+# secrets
+.env
+.env.*
+*.local
+!.env.example
+
+node_modules/
+dist/
+coverage/
+
+# packed tarballs from local pack tests
+*.tgz

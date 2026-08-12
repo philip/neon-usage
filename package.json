@@ -1,0 +1,88 @@
+{
+  "name": "neon-usage",
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "dashboard"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES"
+  ],
+  "sideEffects": false,
+  "bin": {
+    "neon-usage": "dist/bin.js"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('fs').chmodSync('dist/bin.js',0o755)\" && npm --prefix dashboard run build",
+    "check": "npm run typecheck && npm run typecheck:dashboard && npm run lint && npm test",
+    "dev": "tsx src/bin.ts",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "typecheck:dashboard": "npm --workspace dashboard run typecheck",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.0",
+    "commander": "^15.0.0",
+    "decimal.js": "^10.6.0",
+    "hono": "^4.13.1",
+    "lossless-json": "^4.3.1",
+    "p-limit": "^7.3.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.7",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^24.10.0",
+    "fast-check": "^4.9.0",
+    "tsx": "^4.23.11",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "license": "Apache-2.0",
+  "description": "Read-only Neon consumption collection, reporting, and labeled cost estimation with lossless numbers, explicit coverage, and verifiable provenance",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/philip/neon-usage.git"
+  },
+  "homepage": "https://github.com/philip/neon-usage#readme",
+  "bugs": "https://github.com/philip/neon-usage/issues",
+  "author": "Philip Olson",
+  "keywords": [
+    "neon",
+    "postgres",
+    "consumption",
+    "usage",
+    "billing",
+    "metering",
+    "cli",
+    "dashboard"
+  ],
+  "optionalDependencies": {
+    "better-sqlite3": "^12.4.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
