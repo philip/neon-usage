@@ -4,33 +4,57 @@ Read-only CLI, local web dashboard, and TypeScript library for [Neon](https://ne
 
 Unofficial; not affiliated with or endorsed by Neon, Inc. [Apache-2.0](./LICENSE); bundled third-party components credited in [NOTICE](./NOTICE).
 
+![The local dashboard's estimated-price view, rendered from synthetic demo data](https://raw.githubusercontent.com/philip/neon-usage/main/docs/dashboard-demo.png)
+
+The same services drive the terminal (this too is the built-in demo — run it yourself, no account needed):
+
+```text
+$ npx neon-usage@latest usage --demo --format price
+
+DEMO MODE: every value is synthetic (fictional organization; no Neon account involved).
+Neon cost estimate · org-demo-42813975 · not an invoice
+Window: 2026-08-01T00:00:00.000Z -> 2026-08-12T00:00:00.000Z UTC · daily
+Rate card: neon-docs-2026-08-08 (documentation, retrieved 2026-08-08)
+
+PROJECT         ID                       COMPUTE  STORAGE  EGRESS  BRANCHES   TOTAL
+--------------  -----------------------  -------  -------  ------  --------  ------
+api-production  api-production-11837462   $24.63    $2.15  $12.18     $0.00  $38.96
+analytics       analytics-90315377        $17.60    $3.11   $0.00     $0.00  $20.71
+web-frontend    web-frontend-55118210      $9.05    $0.87   $0.00     $0.00   $9.92
+ml-pipeline     ml-pipeline-68821903       $6.45    $1.33   $0.00     $0.00   $7.78
+staging         staging-27604154           $3.00    $0.43   $0.00     $0.00   $3.43
+--------------  -----------------------  -------  -------  ------  --------  ------
+TOTAL                                     $60.73    $7.89  $12.18     $0.00  $80.80
+```
+
 ## Quick start
 
 ```sh
-npm install -g neon-usage        # or: npx neon-usage <command>
+npx neon-usage@latest dashboard --demo  # try it right now: synthetic data, no Neon account needed
+npx neon-usage@latest usage --demo      # the same demo, straight to the terminal
+```
+
+Then, with your own account:
+
+```sh
+npm install -g neon-usage        # or keep using: npx neon-usage <command>
 
 neon auth                        # official Neon CLI, once
 neon link
 neon-usage dashboard             # local dashboard on http://127.0.0.1:<port>
-```
 
-For a dashboard you leave open, mint a non-expiring API key into a profile once and point the tool at it (a `neon auth` login expires hourly — see below):
-
-```sh
-neon profile create neon-usage --mint          # official Neon CLI: mints an API key
-neon-usage dashboard --profile neon-usage       # or: export NEON_PROFILE=neon-usage
-```
-
-Or straight to the terminal:
-
-```sh
-neon-usage usage                 # organization overview: totals, active projects
+neon-usage usage                 # or straight to the terminal
 neon-usage usage --format price  # the same, in estimated dollars
 ```
 
-Credentials resolve from `--api-key`, `--profile`, `NEON_API_KEY`, `NEON_PROFILE`, then the Neon CLI's stored credential — where the default profile follows the CLI's own `profiles.json`, so it tracks `neon auth` wherever it points. `NEON_API_KEY`, `NEON_PROFILE`, and context values (`NEON_ORG_ID`, `NEON_PROJECT_ID`, `NEON_BRANCH`) may also come from the nearest `.env.local` (found walking up from the working directory; an exported value wins). Organization: `NEON_ORG_ID`, then the nearest `.neon`, else auto-selected when the credential sees exactly one.
+The demo is a fictional organization run through the real report pipeline — deterministic synthetic data, zero credentials, nothing real, and labeled as such (it is how the screenshot above was made). `--demo` works on the report commands too (all but `branch-report`).
 
-A `neon auth` login is an OAuth token that **expires (~hourly)**; the official CLI refreshes it, but this read-only tool only reads it, so a stale token is reported plainly (run `neon auth` to refresh). `neon-usage doctor` shows, offline, which credential resolved and when it expires. For anything long-running — the dashboard especially — prefer a non-expiring **API key**. The tidiest way is a minted profile, `neon profile create <name> --mint`, which the tool reads via `--profile <name>` (or `NEON_PROFILE`); a console key in `NEON_API_KEY` works too.
+A `neon auth` login expires (~hourly) and this tool only reads it. For anything long-running — the dashboard especially — mint a non-expiring API key into a profile once:
+
+```sh
+neon profile create neon-usage --mint           # official Neon CLI
+neon-usage dashboard --profile neon-usage       # or: export NEON_PROFILE=neon-usage
+```
 
 ## Commands
 
@@ -47,24 +71,24 @@ A `neon auth` login is an OAuth token that **expires (~hourly)**; the official C
 | `capabilities` | Declared plan capability vs observed availability |
 | `branch-report` | Beta branch-attributed history |
 | `context` | Resolved credential/organization context |
-| `doctor` | Offline local diagnosis: credential source/expiry, context, store health, request budget |
+| `doctor` | Offline diagnosis: credential, context, store health, budgets |
 
-`usage`, `project-report`, `estimate`, `current-report`, `controls`, and `doctor` take `--output table|json` (JSON is the machine contract; default when piped); the other commands emit JSON only. Report commands take `--org-id`; history commands (`usage`, `project-report`, `estimate`, `organization-summary`, `branch-report`) additionally take windows via `--from`/`--to`, `--last 7d` (units follow `--granularity`: h/d/w for hourly, d/w for daily, mo for monthly), or `--month 2026-07|current|previous`, with `--granularity hourly|daily|monthly`. With no window given, the daily default is the current month to date (the billing-period view). Partial coverage is labeled in the report and signaled with exit code 2.
+How the commands behave (details in `--help` and [docs/how-it-works.md](https://github.com/philip/neon-usage/blob/main/docs/how-it-works.md)):
 
-By default, per-project commands (`project-report`, `branch-report`, `current-report`) report the **one project linked in the nearest `.neon`** — a couple of requests, not a whole-org fan-out. `--org-id` selects the organization, not the projects; to widen the project set use `--project-ids <ids>`, `--project-ids all` (`current-report`, `controls`), or `--scope live-projects` (all currently-existing projects). `project-report` and `estimate` accept `--scope organization|live-projects` (invoice-aligned vs fast); those two plus `usage` and `organization-summary` accept `--fresh` (ignore the local store) and `--store-tail <n>` (`branch-report` always re-collects and takes none of the three). Collections walk the API under an account request budget of 45 requests/minute by default — the global `--request-budget <perMinute>` flag (1-600) raises or lowers it, at your own rate-limit risk. Each collection also runs under adjustable aggregate ceilings (`--max-duration <minutes>`, `--max-items`, `--max-facts`, `--max-bytes`); past one, the report stops honestly as `partial` with the specific limit flag. Collections persist to a local SQLite store and repeat queries serve from it in about a second — see [docs/how-it-works.md](https://github.com/philip/neon-usage/blob/main/docs/how-it-works.md) for scopes, serve-from-store, and the honesty rules every report follows.
-
-Persistence uses `better-sqlite3`, an **optional** native dependency. If it can't build (an unsupported platform, or an npm policy that blocks install scripts), the tool still works — it warns once and runs against an in-memory store for that session, losing only persistence and serve-from-store speed. Reinstalling so the native binary builds restores it.
+- **Output** — `usage`, `project-report`, `estimate`, `current-report`, `controls`, and `doctor` take `--output table|json`; the rest emit JSON only. JSON is the lossless machine contract (default when piped). Partial coverage is labeled in the report and signaled with exit code 2.
+- **Windows** — `--last 7d`, `--month 2026-07|current|previous`, or `--from`/`--to`, with `--granularity hourly|daily|monthly`. Default: the current month to date, daily.
+- **Project scope** — per-project commands default to the project linked in the nearest `.neon`. Widen with `--project-ids <ids>` (`all` on `current-report` and `controls`), or with `--scope organization|live-projects` on `project-report` and `estimate` — invoice-aligned versus fast; live scope excludes projects deleted in-window and says so.
+- **Budgets** — collections walk the API at 45 requests/minute (`--request-budget`) under aggregate ceilings (`--max-duration`, `--max-items`, `--max-facts`, `--max-bytes`); a hit ceiling stops honestly as `partial` with the specific limit flag.
+- **Local store** — collections persist to per-user SQLite and repeat queries serve from it in about a second (`--fresh` recollects; `--store-tail <n>` re-observes the tail; `branch-report` always re-collects). `better-sqlite3` is an optional native dependency: if it can't build, the tool warns once and runs in-memory for the session.
+- **Credentials** — `--api-key`, `--profile`, `NEON_API_KEY`, `NEON_PROFILE`, then the Neon CLI's stored login; `.env.local` may supply key, profile, and context values. `neon-usage doctor` shows what resolved and when it expires, offline.
 
 ## Dashboard
 
-`neon-usage dashboard` serves a local web page on a fresh ephemeral loopback port, guarded by a fresh per-process access token that keeps other OS accounts, hostile web pages, and blind local clients out. Your API key never reaches the browser; only report JSON is sent to the page. The dashboard is built on Neon's official UI component registry, [ui.neon.com](https://ui.neon.com), and shows usage by project, history charts, cost estimates, the current-period snapshot, and quota utilization, with a billing-period picker and light/dark themes. It opens your browser automatically; with `--no-open` (or `BROWSER=none`) it prints the token-carrying URL instead. The token is carried in the URL fragment, which is not sent to the server; it stays in the address bar, so reloading the page keeps working while the server runs. Restart the command and use its newly opened or printed URL to reconnect.
+A local page over the same services: usage by project, history charts, cost estimates, the current-period snapshot, and quota utilization, with a billing-period picker and light/dark themes — built on Neon's official UI registry, [ui.neon.com](https://ui.neon.com). Free-plan organizations get a plan-aware view built on the current-period snapshot.
 
-It offers two collection **scopes**, honestly labeled:
+It binds a fresh ephemeral loopback port behind a fresh per-process access token; your API key never reaches the browser — only report JSON does. The token travels in the URL fragment (never sent to the server) and reloads keep working while the server runs; `--no-open` prints the URL instead of launching a browser. Threat model and limits: [SECURITY.md](https://github.com/philip/neon-usage/blob/main/SECURITY.md).
 
-- **All projects** — the invoice-aligned whole-organization collection (the CLI's explicit `--scope organization`). Complete, but slower on large organizations.
-- **Live only (fast)** — collects history for currently existing projects only (`--scope live-projects`). Much faster on large or churn-heavy organizations, but **can undercount the invoice**: projects deleted during the window still bill and are excluded, which the page states plainly.
-
-Free-plan organizations get a plan-aware view built on the current-period snapshot, since Neon's consumption history API is available on Launch and above.
+Collection scope is a visible toggle, honestly labeled: **All projects** (invoice-aligned, slower on large fleets) or **Live only (fast)** (excludes projects deleted in-window — can undercount the invoice, and the page says so).
 
 ## Documentation
 

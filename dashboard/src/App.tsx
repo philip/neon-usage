@@ -505,6 +505,11 @@ export default function App({ authorized = true }: { authorized?: boolean }) {
           dashboard` and use the URL it opens or prints.
         </p>
       ) : null}
+      {context.data?.credential === "demo" ? (
+        <p className="rounded-md border border-[color:var(--border)] bg-[color:var(--muted)]/40 px-3 py-2 text-xs text-[color:var(--muted-foreground)]">
+          Demo data — every value on this page is synthetic; no Neon account is involved.
+        </p>
+      ) : null}
       {context.data?.credential === "missing" ? (
         <p className="rounded-md border border-[color:var(--destructive)]/40 bg-[color:var(--destructive)]/10 p-3 text-sm">
           No Neon credential found. Set NEON_API_KEY, add .env.local, or run `neon auth`, then

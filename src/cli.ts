@@ -4,6 +4,7 @@ import { Command, InvalidArgumentError, Option } from "commander";
 // Adapter and composition modules are imported directly, not via the domain barrel.
 import { startDashboardServer } from "./dashboard-server.js";
 import { createNeonDependencies, defaultStorePath } from "./default-dependencies.js";
+import { createDemoDependencies } from "./demo-dependencies.js";
 import { createDoctorReport, renderDoctorReport } from "./doctor.js";
 import {
   assertWithinHistoryFilter,
@@ -219,16 +220,36 @@ export async function runCli(
     ].join("\n"),
   );
 
+  // Demo wins over the real composition; injected dependencies (tests,
+  // embedders) still supply the output sink so demo output stays capturable.
+  const resolveDependencies = (demo?: boolean): CliDependencies => {
+    if (!demo) {
+      return dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+    }
+    process.stderr.write(
+      "DEMO MODE: every value is synthetic (fictional organization; no Neon account involved).\n",
+    );
+    const collectionBudget = parseCollectionBudget(program.opts());
+    return {
+      ...createDemoDependencies({
+        now: runtime.now,
+        ...(collectionBudget ? { collectionBudget } : {}),
+      }),
+      write: dependencies?.write ?? ((value: string) => process.stdout.write(value)),
+      ...(dependencies?.setExitCode ? { setExitCode: dependencies.setExitCode } : {}),
+    };
+  };
+
   const projectReportCommand = program
     .command("project-report")
     .description("Collect invoice-aligned project history with explicit coverage status")
+    .addOption(demoOption())
     .addOption(new Option("--output <format>", "output format").choices(["json", "table"]))
     .addOption(scopeOption())
     .option("--project-ids <ids>", "project IDs (defaults to the project in .neon)");
   addHistoryOptions(projectReportCommand, projectConsumptionMetrics).action(async (options) => {
     const query = historyQueryFromOptions(options, runtime.now());
-    const activeDependencies =
-      dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+    const activeDependencies = resolveDependencies(options.demo);
     query.organizationId = await resolveOrganizationId(query.organizationId, activeDependencies);
     // Explicit IDs win; explicit `--scope organization` means the WHOLE
     // organization (never the linked-project default — the label must match
@@ -273,8 +294,7 @@ export async function runCli(
     .option("--branch-ids <ids>", "optional comma-separated branch IDs");
   addHistoryOptions(branchReportCommand, branchConsumptionMetrics, true, false).action(
     async (options) => {
-      const activeDependencies =
-        dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+      const activeDependencies = resolveDependencies(options.demo);
       const projectIds = defaultHistoryProjectIds(options, activeDependencies);
       if (!projectIds?.length) {
         throw new Error(
@@ -297,12 +317,12 @@ export async function runCli(
 
   const organizationSummaryCommand = program
     .command("organization-summary")
-    .description("Aggregate complete project history into billing-unit organization totals");
+    .description("Aggregate complete project history into billing-unit organization totals")
+    .addOption(demoOption());
   addHistoryOptions(organizationSummaryCommand, projectConsumptionMetrics).action(
     async (options) => {
       const query = historyQueryFromOptions(options, runtime.now());
-      const activeDependencies =
-        dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+      const activeDependencies = resolveDependencies(options.demo);
       query.organizationId = await resolveOrganizationId(query.organizationId, activeDependencies);
       const report = await activeDependencies.organizationSummary(
         query,
@@ -318,12 +338,12 @@ export async function runCli(
   const estimateCommand = program
     .command("estimate")
     .description("Project complete history into a labeled cost estimate (never an invoice)")
+    .addOption(demoOption())
     .addOption(new Option("--output <format>", "output format").choices(["json", "table"]))
     .addOption(scopeOption());
   addHistoryOptions(estimateCommand, projectConsumptionMetrics).action(async (options) => {
     const query = historyQueryFromOptions(options, runtime.now());
-    const activeDependencies =
-      dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+    const activeDependencies = resolveDependencies(options.demo);
     if (!activeDependencies.estimate) {
       throw new Error("Cost estimation is unavailable in the configured CLI adapter");
     }
@@ -342,6 +362,7 @@ export async function runCli(
   program
     .command("controls")
     .description("Inspect native spending notifications and project quotas (read-only)")
+    .addOption(demoOption())
     .option("--utilization", "join quota limits with current-period usage")
     .addOption(new Option("--output <format>", "output format").choices(["json", "table"]))
     .option("--org-id <id>", "Neon organization ID (defaults to NEON_ORG_ID or .neon)")
@@ -350,8 +371,7 @@ export async function runCli(
       "project IDs, or 'all' (defaults to the linked project, else all projects)",
     )
     .action(async (options) => {
-      const activeDependencies =
-        dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+      const activeDependencies = resolveDependencies(options.demo);
       if (!activeDependencies.controls) {
         throw new Error("Controls inspection is unavailable in the configured CLI adapter");
       }
@@ -389,10 +409,10 @@ export async function runCli(
   program
     .command("capabilities")
     .description("Inspect declared plan capabilities and observed history availability")
+    .addOption(demoOption())
     .option("--org-id <id>", "Neon organization ID (defaults to NEON_ORG_ID or .neon)")
     .action(async (options) => {
-      const activeDependencies =
-        dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+      const activeDependencies = resolveDependencies(options.demo);
       const result = await activeDependencies.capabilities(
         await resolveOrganizationId(options.orgId, activeDependencies),
       );
@@ -402,6 +422,7 @@ export async function runCli(
   program
     .command("current-report")
     .description("Collect Free-compatible current-period project and branch snapshots")
+    .addOption(demoOption())
     .addOption(new Option("--output <format>", "output format").choices(["json", "table"]))
     .option("--org-id <id>", "Neon organization ID (defaults to NEON_ORG_ID or .neon)")
     .option(
@@ -409,8 +430,7 @@ export async function runCli(
       "project IDs, or 'all' for every project (defaults to the project in .neon; a project-record request plus a branch listing each)",
     )
     .action(async (options) => {
-      const activeDependencies =
-        dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+      const activeDependencies = resolveDependencies(options.demo);
       // Default to the linked project — one request instead of a per-project
       // fan-out over the whole org. 'all' (or no linked project) still widens.
       const projectIds =
@@ -441,9 +461,9 @@ export async function runCli(
   program
     .command("organizations")
     .description("List organizations visible to the selected Neon credential")
-    .action(async () => {
-      const activeDependencies =
-        dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+    .addOption(demoOption())
+    .action(async (options) => {
+      const activeDependencies = resolveDependencies(options.demo);
       if (!activeDependencies.organizations) {
         throw new Error("Organization discovery is unavailable in the configured CLI adapter");
       }
@@ -453,10 +473,10 @@ export async function runCli(
   program
     .command("projects")
     .description("List project names and IDs for an organization")
+    .addOption(demoOption())
     .option("--org-id <id>", "Neon organization ID (defaults to NEON_ORG_ID or .neon)")
     .action(async (options) => {
-      const activeDependencies =
-        dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+      const activeDependencies = resolveDependencies(options.demo);
       if (!activeDependencies.projects) {
         throw new Error("Project discovery is unavailable in the configured CLI adapter");
       }
@@ -467,6 +487,7 @@ export async function runCli(
   const usageCommand = program
     .command("usage")
     .description("Show concise organization totals and active projects by name")
+    .addOption(demoOption())
     .addOption(new Option("--output <format>", "output format").choices(["json", "table"]))
     .addOption(
       new Option("--format <units>", "quantities or estimated prices")
@@ -474,8 +495,7 @@ export async function runCli(
         .default("gb"),
     );
   addHistoryOptions(usageCommand, projectConsumptionMetrics, false).action(async (options) => {
-    const activeDependencies =
-      dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+    const activeDependencies = resolveDependencies(options.demo);
     const query = historyQueryFromOptions(options, runtime.now());
     query.organizationId = await resolveOrganizationId(query.organizationId, activeDependencies);
     const output = options.output ?? (runtime.isTTY ? "table" : "json");
@@ -519,16 +539,17 @@ export async function runCli(
       "Serve the local dashboard over the same read-only services (loopback only: 127.0.0.1 and ::1)",
     )
     .option("--no-open", "do not open the dashboard in your browser")
+    .addOption(demoOption())
     .action(async (options) => {
-      const activeDependencies =
-        dependencies ?? createDefaultDependencies(program.opts(), openedStores);
+      const activeDependencies = resolveDependencies(options.demo);
       const server = await startDashboardServer(activeDependencies, {}, { now: runtime.now });
+      const write = activeDependencies.write;
       // The page URL carries the startup capability; the API refuses requests
       // without it, so other local processes can't read this account's data.
       // When the browser auto-opens it receives the token invisibly, so the
       // printed line stays clean; without auto-open the tokened URL is the way in.
       const opening = shouldOpenBrowser(options, process.env);
-      activeDependencies.write(
+      write(
         `Dashboard running at ${opening ? server.url : server.pageUrl}\nPress Ctrl+C to stop.\n`,
       );
       if (opening) (runtime.openUrl ?? openBrowser)(server.pageUrl);
@@ -593,6 +614,15 @@ export async function runCli(
   } finally {
     for (const store of openedStores.splice(0)) store.close();
   }
+}
+
+/** `--demo` on the commands where synthetic data makes sense; doctor and
+ * context always diagnose the real environment and deliberately lack it. */
+function demoOption(): Option {
+  return new Option(
+    "--demo",
+    "run against deterministic synthetic data: no credential, no Neon API, nothing real",
+  );
 }
 
 function scopeOption(): Option {
