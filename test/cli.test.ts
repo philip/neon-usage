@@ -811,3 +811,45 @@ describe("parseCollectionBudget", () => {
     expect(() => parseCollectionBudget({ maxBytes: "1000000001" })).toThrow(/--max-bytes/);
   });
 });
+
+describe("CLI demo mode", () => {
+  const captured = () => {
+    let stdout = "";
+    return {
+      deps: {
+        projectReport: async () => {
+          throw new Error("demo must not use injected report dependencies");
+        },
+        branchReport: async () => ({}),
+        organizationSummary: async () => ({}),
+        capabilities: async () => ({}),
+        currentReport: async () => ({}),
+        write: (value: string) => {
+          stdout += value;
+        },
+        // biome-ignore lint/suspicious/noExplicitAny: partial stub
+      } as any,
+      read: () => stdout,
+    };
+  };
+
+  it("serves synthetic reports with the injected output sink", async () => {
+    const sink = captured();
+    await runCli(["usage", "--demo"], sink.deps, {
+      now: () => new Date("2026-08-12T15:00:00Z"),
+      isTTY: false,
+    });
+    const overview = JSON.parse(sink.read());
+    expect(overview.organization).toMatchObject({ name: "Acme Cloud", plan: "launch" });
+    expect(overview.coverage.status).toBe("complete");
+  });
+
+  it("renders demo tables for the linked-project default", async () => {
+    const sink = captured();
+    await runCli(["project-report", "--demo", "--output", "table"], sink.deps, {
+      now: () => new Date("2026-08-12T15:00:00Z"),
+      isTTY: false,
+    });
+    expect(sink.read()).toContain("org-demo-42813975 · api-production-11837462");
+  });
+});

@@ -24,7 +24,7 @@ export type ResolvedContextReport = {
   organizationId: string | null;
   projectId: string | null;
   branch: string | null;
-  credential: "configured" | "missing" | "injected";
+  credential: "configured" | "missing" | "injected" | "demo";
 };
 
 /**

@@ -11,6 +11,10 @@ Every report follows the same rules, whether it reaches you as CLI JSON, a table
 - **Staleness is derivable.** Reports carry `generatedAt` (when produced) and `asOf` (the end of the last complete bucket they can reflect).
 - **Partial coverage exits 2.** Scripts can distinguish "complete" from "collected with gaps" without parsing.
 
+## Credentials and context
+
+Credentials resolve in order: `--api-key`, `--profile`, `NEON_API_KEY`, `NEON_PROFILE`, then the Neon CLI's stored login — where the default profile follows the CLI's own `profiles.json`, so it tracks `neon auth` wherever it points. `NEON_API_KEY`, `NEON_PROFILE`, and context values (`NEON_ORG_ID`, `NEON_PROJECT_ID`, `NEON_BRANCH`) may also come from the nearest `.env.local`, found walking up from the working directory; an exported environment value always wins. The organization resolves from `NEON_ORG_ID`, then the nearest `.neon`, else it is auto-selected when the credential sees exactly one. A `neon auth` login is an OAuth token that expires (~hourly); this tool only reads it, so when it is stale, rerun `neon auth` (or any `neon` command) to refresh it, or use a non-expiring API key. `neon-usage doctor` shows, offline, exactly what resolved and when it expires.
+
 ## Scopes
 
 Every collection also runs under aggregate budgets — defaults: 10 minutes wall-clock, 10,000 entities, 1,000,000 facts, 100 MB of response bytes, alongside the page cap; the global `--max-duration <minutes>`, `--max-items`, `--max-facts`, and `--max-bytes` flags adjust them. A budget that runs out never fails the report: it stops collecting, keeps what was accepted, and labels the result `partial` with the specific flag (`TIME_LIMIT_REACHED`, `ITEM_LIMIT_REACHED`, `FACT_LIMIT_REACHED`, `BYTE_LIMIT_REACHED`, `PAGE_LIMIT_REACHED`) — the same honesty rule as any other gap. Serialized machine output is capped at 25 MB per response.
