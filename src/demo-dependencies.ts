@@ -17,7 +17,6 @@ import type {
   EvidenceRef,
   ProjectConsumptionPage,
   ProjectCurrentSnapshot,
-  SourcePeriod,
 } from "./consumption-source.js";
 import type { ControlsSource, ProjectQuotaSnapshotReading } from "./controls-service.js";
 import { createControlsService, createQuotaUtilizationService } from "./controls-service.js";
