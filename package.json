@@ -30,7 +30,7 @@
     "check": "npm run typecheck && npm run typecheck:dashboard && npm run lint && npm test",
     "dev": "tsx src/bin.ts",
     "format": "biome format --write .",
-    "lint": "biome check .",
+    "lint": "biome check --error-on-warnings .",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
