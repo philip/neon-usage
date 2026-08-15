@@ -81,8 +81,8 @@ export type {
   CurrentSnapshotService,
 } from "./current-snapshot-service.js";
 export { createCurrentSnapshotService } from "./current-snapshot-service.js";
-export type { SourceErrorDetail } from "./errors.js";
-export { ConsumptionSourceIntegrityError } from "./errors.js";
+export type { CliErrorParts, SourceErrorDetail } from "./errors.js";
+export { CliError, ConsumptionSourceIntegrityError } from "./errors.js";
 export { renderEstimateTable, renderPriceTable } from "./estimate-presenter.js";
 export type {
   AppendReceipt,

@@ -3,6 +3,39 @@ export class ConsumptionSourceIntegrityError extends Error {
   readonly integrityFailure = true;
 }
 
+/** The three parts of a presentable CLI error: a short headline, an optional
+ *  detail line, and an optional actionable fix. See `formatCliError`. */
+export type CliErrorParts = { headline: string; detail?: string; fix?: string };
+
+/**
+ * A user-facing error that carries its parts separately so the CLI can render
+ * a headline plus an actionable "To fix" block instead of one long line. The
+ * composed `.message` keeps a sensible single-string form for any consumer that
+ * reads it plainly (logs, the HTTP adapter, tests that match on message text).
+ */
+export class CliError extends Error {
+  override readonly name = "CliError";
+  readonly headline: string;
+  readonly detail: string | undefined;
+  readonly fix: string | undefined;
+  constructor(parts: CliErrorParts) {
+    // The parts render as separate blocks, but `.message` joins them into one
+    // string for plain consumers (logs, tests). The headline carries no
+    // trailing period so it reads as a heading when displayed; add one here so
+    // the joined message reads as sentences rather than "expired The stored...".
+    const asSentence = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`);
+    super(
+      [parts.headline, parts.detail, parts.fix]
+        .filter((part): part is string => Boolean(part))
+        .map(asSentence)
+        .join(" "),
+    );
+    this.headline = parts.headline;
+    this.detail = parts.detail;
+    this.fix = parts.fix;
+  }
+}
+
 export type SourceErrorDetail = {
   code: string;
   message: string;

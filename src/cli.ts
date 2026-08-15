@@ -10,6 +10,7 @@ import {
   assertWithinHistoryFilter,
   type BranchReportQuery,
   branchConsumptionMetrics,
+  CliError,
   type CollectionControl,
   type ControlsInspection,
   type CurrentPeriodSnapshotReport,
@@ -112,6 +113,23 @@ export function parseRequestBudget(
     throw new Error("--request-budget must be an integer between 1 and 600 requests per minute");
   }
   return { limit, intervalMs: 60_000 };
+}
+
+/**
+ * Fails with an actionable error when credential resolution found no API key.
+ * Extracted so the guidance (mint a profile, then select it) is unit-tested;
+ * minting alone leaves the user on the DEFAULT profile, so the fix names the
+ * `neon-usage --profile` step that actually points the tool at the new key.
+ */
+export function assertCredentialResolved(apiKey: string | undefined): asserts apiKey is string {
+  if (apiKey) return;
+  throw new CliError({
+    headline: "No Neon credential found",
+    fix:
+      "Run `neon auth` to log in, or mint a profile: `neon profile create <name> --mint` " +
+      "then `neon-usage --profile <name>`. A NEON_API_KEY in .env.local also works and " +
+      "does not expire.",
+  });
 }
 
 /**
@@ -728,11 +746,7 @@ function createDefaultDependencies(
   openedStores: EvidenceFactStore[],
 ): CliDependencies {
   const context = resolveDefaultContext(options);
-  if (!context.apiKey) {
-    throw new Error(
-      "Neon API credentials were not found; set NEON_API_KEY, add it to .env.local, pass --api-key, or run `neon auth`",
-    );
-  }
+  assertCredentialResolved(context.apiKey);
   // One durable store per user, not per working directory: --store wins, then
   // NEON_USAGE_STORE, then an OS-appropriate data directory.
   const requestBudget = parseRequestBudget(options.requestBudget);
