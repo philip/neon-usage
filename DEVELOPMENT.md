@@ -81,7 +81,7 @@ These are **vendored** (copied into the repo, presentational-first), not a runti
 
 Consumption and snapshot counters can exceed JavaScript's safe integer range. The Neon adapter uses the public API with `lossless-json` and validates responses with Zod, preserving JSON integers as decimal strings. A defensive 40-digit ceiling bounds arbitrary-precision work against hostile responses; this is a local safety limit, not a published Neon counter limit. Known metric dimensions and exact conversion live in `metric-catalog.ts`; unknown source metrics remain source observations and cannot be assigned an arbitrary billing unit.
 
-Every API request passes through the injected account request coordinator (the CLI defaults to 45 requests/minute; `--request-budget` raises or lowers it, 1-600), with bounded GET retries, request deadlines, and independent cancellation via `OperationContext`; a source may also receive `shutdownSignal` to stop every operation of a shared adapter. A cancelled operation never dispatches its request.
+Every API request passes through the injected account request coordinator (the CLI defaults to 180 requests/minute; `--request-budget` raises or lowers it, 1-600), with bounded GET retries, request deadlines, and independent cancellation via `OperationContext`; a source may also receive `shutdownSignal` to stop every operation of a shared adapter. A cancelled operation never dispatches its request.
 
 ## Evidence and stores
 
@@ -108,7 +108,7 @@ The full quality gate is `npm run check` (root typecheck, dashboard typecheck, l
 
 Known limitations:
 
-- Large organizations collect slowly: the v2 history endpoint caps `limit` at 100, a cursor walk is serial (~1.3 s/page), and snapshot/quota endpoints cost two requests per project (project record plus branch listing). Serve-from-store, chunked estimation, scoped per-project sections, and memoization mitigate this; the default 45 req/min budget bounds it (`--request-budget` adjusts the dial).
+- Large organizations collect slowly: the v2 history endpoint caps `limit` at 100, a cursor walk is serial (~1.3 s/page), and snapshot/quota endpoints cost two requests per project (project record plus branch listing). Serve-from-store, chunked estimation, scoped per-project sections, and memoization mitigate this; the default 180 req/min budget bounds it (`--request-budget` adjusts the dial).
 - Only Free, Launch, and Scale plan capabilities are live-validated; Agent, Business, and Enterprise entries in `capability-service.ts` are declared, not observed.
 
 Roadmap (roughly ordered):

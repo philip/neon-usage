@@ -140,11 +140,11 @@ describe("createDoctorReport", () => {
         persistence: sqliteModule ? "available" : "unavailable",
         file: { exists: false },
       },
-      requestBudget: { limit: 45, intervalMs: 60_000 },
+      requestBudget: { limit: 180, intervalMs: 60_000 },
     });
     expect(report.rateCard.revision).toMatch(/^neon-docs-/);
     expect(report.requestBudget).toEqual({
-      limit: 45,
+      limit: 180,
       intervalMs: 60_000,
       source: "built-in default",
     });

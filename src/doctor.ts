@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 // Type-only: erased at compile, so importing this module never loads the
 // optional native dependency.
 import type Database from "better-sqlite3";
-import { defaultStorePath } from "./default-dependencies.js";
+import { DEFAULT_REQUEST_BUDGET, defaultStorePath } from "./default-dependencies.js";
 import { diagnoseNeonCliContext, type NeonCliDiagnosis } from "./neon-cli-context.js";
 import { neonDocumentationRateCard } from "./rate-card.js";
 
@@ -104,7 +104,7 @@ export function createDoctorReport(inputs: DoctorInputs): DoctorReport {
     },
     requestBudget: inputs.requestBudget
       ? { ...inputs.requestBudget, source: "flag" }
-      : { limit: 45, intervalMs: 60_000, source: "built-in default" },
+      : { ...DEFAULT_REQUEST_BUDGET, source: "built-in default" },
     collectionBudget: {
       maxDurationMs: inputs.collectionBudget?.maxDurationMs ?? 10 * 60_000,
       maxItems: inputs.collectionBudget?.maxItems ?? 10_000,
