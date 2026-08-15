@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   browserOpenCommand,
   parseCollectionBudget,
+  parsePort,
   parseRequestBudget,
   runCli,
   shouldOpenBrowser,
@@ -786,6 +787,17 @@ describe("parseRequestBudget", () => {
     expect(parseRequestBudget("600")).toEqual({ limit: 600, intervalMs: 60_000 });
     for (const invalid of ["0", "601", "4.5", "abc", "-1", ""]) {
       expect(() => parseRequestBudget(invalid)).toThrow(/between 1 and 600/);
+    }
+  });
+});
+
+describe("parsePort", () => {
+  it("accepts an integer TCP port in 1-65535 and rejects the rest", () => {
+    expect(parsePort("4321")).toBe(4321);
+    expect(parsePort("1")).toBe(1);
+    expect(parsePort("65535")).toBe(65535);
+    for (const invalid of ["0", "65536", "4.5", "abc", "-1", ""]) {
+      expect(() => parsePort(invalid)).toThrow(/between 1 and 65535/);
     }
   });
 });

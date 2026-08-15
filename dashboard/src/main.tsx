@@ -9,8 +9,10 @@ import "./index.css";
 // preference on first visit.
 applyTheme(storedTheme());
 // Capture the launch URL's fragment token before render (it stays in the
-// address bar so reloads keep working).
-const authorized = bootstrapToken();
+// address bar so reloads keep working). Under the Vite dev server there is no
+// launch URL — it proxies /api to a `dashboard --no-token` process — so treat
+// dev as authorized; this branch compiles out of the shipped production build.
+const authorized = bootstrapToken() || import.meta.env.DEV;
 
 const root = document.getElementById("root");
 if (root) {

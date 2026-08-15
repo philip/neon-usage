@@ -265,7 +265,7 @@ const assetContentTypes: Record<string, string> = {
  * run from src/ reaches the same build one level up. No build present is a
  * supported state — the JSON route index serves at / instead.
  */
-function defaultAssetsDirectory(): string | null {
+export function defaultAssetsDirectory(): string | null {
   for (const candidate of ["./dashboard/", "../dist/dashboard/"]) {
     const directory = fileURLToPath(new URL(candidate, import.meta.url));
     if (existsSync(join(directory, "index.html"))) return directory;

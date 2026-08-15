@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { Command, InvalidArgumentError, Option } from "commander";
 // Adapter and composition modules are imported directly, not via the domain barrel.
-import { startDashboardServer } from "./dashboard-server.js";
+import { defaultAssetsDirectory, startDashboardServer } from "./dashboard-server.js";
 import { createNeonDependencies, defaultStorePath } from "./default-dependencies.js";
 import { createDemoDependencies } from "./demo-dependencies.js";
 import { createDoctorReport, renderDoctorReport } from "./doctor.js";
@@ -112,6 +112,15 @@ export function parseRequestBudget(
     throw new Error("--request-budget must be an integer between 1 and 600 requests per minute");
   }
   return { limit, intervalMs: 60_000 };
+}
+
+/** Parses --port: a TCP port to bind, 1-65535 (0 keeps the ephemeral default). */
+export function parsePort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new InvalidArgumentError("--port must be an integer between 1 and 65535");
+  }
+  return port;
 }
 
 /**
@@ -539,11 +548,43 @@ export async function runCli(
       "Serve the local dashboard over the same read-only services (loopback only: 127.0.0.1 and ::1)",
     )
     .option("--no-open", "do not open the dashboard in your browser")
+    .addOption(
+      new Option("--port <port>", "bind a fixed port instead of an ephemeral one").argParser(
+        parsePort,
+      ),
+    )
+    .addOption(
+      // The startup token guards /api against other local processes, but the
+      // page loaded from the Vite dev server carries no token fragment, so its
+      // proxied /api calls would 401. This opt-out is for that loopback dev
+      // proxy (and embedding); the Host/Origin checks still stand.
+      new Option("--no-token", "disable the /api startup token (for the Vite dev proxy)"),
+    )
     .addOption(demoOption())
     .action(async (options) => {
       const activeDependencies = resolveDependencies(options.demo);
-      const server = await startDashboardServer(activeDependencies, {}, { now: runtime.now });
+      const server = await startDashboardServer(
+        activeDependencies,
+        {
+          ...(options.port !== undefined ? { port: options.port } : {}),
+          ...(options.token === false ? { apiToken: null } : {}),
+        },
+        { now: runtime.now },
+      );
       const write = activeDependencies.write;
+      // No built page means we serve the JSON route index at / (a supported
+      // state), which reads as "broken" to anyone expecting the UI. Point them
+      // at the build step or the HMR dev loop rather than let it puzzle. Skip
+      // it under --no-token: that's the Vite dev proxy, which fronts this
+      // server with its own hot-reloading page, so this server's missing build
+      // is irrelevant and the "run dev:dashboard" hint would be circular.
+      if (options.token !== false && defaultAssetsDirectory() === null) {
+        write(
+          "Note: the dashboard UI is not built, so / serves the JSON route index.\n" +
+            "  Build it once:  npm --prefix dashboard run build\n" +
+            "  Or hot-reload:  npm run dev:dashboard\n",
+        );
+      }
       // The page URL carries the startup capability; the API refuses requests
       // without it, so other local processes can't read this account's data.
       // When the browser auto-opens it receives the token invisibly, so the
