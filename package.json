@@ -29,6 +29,8 @@
     "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('fs').chmodSync('dist/bin.js',0o755)\" && npm --prefix dashboard run build",
     "check": "npm run typecheck && npm run typecheck:dashboard && npm run lint && npm test",
     "dev": "tsx src/bin.ts",
+    "dev:dashboard": "tsx scripts/dev-dashboard.ts",
+    "preview:dashboard": "npm --prefix dashboard run build && npm run dev -- dashboard",
     "format": "biome format --write .",
     "lint": "biome check --error-on-warnings .",
     "test": "vitest run",

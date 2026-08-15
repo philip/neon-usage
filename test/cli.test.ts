@@ -3,6 +3,7 @@ import {
   assertCredentialResolved,
   browserOpenCommand,
   parseCollectionBudget,
+  parsePort,
   parseRequestBudget,
   runCli,
   shouldOpenBrowser,
@@ -812,6 +813,17 @@ describe("assertCredentialResolved", () => {
     expect(error.fix).toContain("neon profile create <name> --mint");
     expect(error.fix).toContain("neon-usage --profile <name>");
     expect(error.fix).not.toContain("--api-key");
+  });
+});
+
+describe("parsePort", () => {
+  it("accepts an integer TCP port in 1-65535 and rejects the rest", () => {
+    expect(parsePort("4321")).toBe(4321);
+    expect(parsePort("1")).toBe(1);
+    expect(parsePort("65535")).toBe(65535);
+    for (const invalid of ["0", "65536", "4.5", "abc", "-1", ""]) {
+      expect(() => parsePort(invalid)).toThrow(/between 1 and 65535/);
+    }
   });
 });
 

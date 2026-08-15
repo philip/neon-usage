@@ -8,9 +8,13 @@ npm run typecheck
 npm run lint
 npm run build
 npm run dev -- project-report --help
+npm run dev:dashboard            # hot-reloading dashboard on demo data
+npm run preview:dashboard        # build the page, then serve your own account
 ```
 
 Live smoke tests are read-only and use the local `.neon` context plus `.env.local`, `NEON_API_KEY`, or existing Neon CLI credentials. `npm run dev -- capabilities` should work without `--org-id` after `neon link`. Mutation support is outside the current slice.
+
+To work on the page itself, `npm run dev:dashboard` starts the API and the Vite dev server together, so edits under `dashboard/` hot-reload. Open the printed Vite URL (http://localhost:5173); it proxies `/api` to the server on port 4321. This loop serves demo data and disables the API token, so the open port never exposes a real account; Ctrl+C stops both processes. To see the built page against your own account instead, `npm run preview:dashboard` builds it and serves it through the ordinary `dashboard` command, keeping the per-launch token and ephemeral port (a valid credential is required). The orchestrator is a small first-party script, `scripts/dev-dashboard.ts`, with no added dependency.
 
 Sanitized live captures for Free, Launch, and Scale live under `test/fixtures/replay/live` with byte-stable expected output (`test/live-replay.test.ts`). Two live-validated wire behaviors are encoded in the Neon adapter: the `/projects` endpoint terminates with an empty page that still carries a cursor, and `/branches` omits `logical_size` for branches whose size has not been computed (reported as an explicit unknown). Regenerate captures with a recording `fetch` around `createNeonApiSource`; sanitize every organization/project/branch identifier and name, including JSON object keys, and scrub `email`/`created_by` before committing.
 
