@@ -764,6 +764,9 @@ export function contextReport(result: ResolvedContextReport): Record<string, unk
     ...(result.organizationId ? {} : { organizationHint: "Set NEON_ORG_ID or run `neon link`" }),
     ...(result.credential !== "missing"
       ? {}
-      : { credentialHint: "Set NEON_API_KEY, add .env.local, or run `neon auth`" }),
+      : {
+          credentialHint:
+            "Run `neon auth`, or mint a profile with `neon profile create <name> --mint` then `neon-usage --profile <name>`; a NEON_API_KEY in .env.local also works",
+        }),
   };
 }

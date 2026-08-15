@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertCredentialResolved,
   browserOpenCommand,
   parseCollectionBudget,
   parsePort,
@@ -7,6 +8,7 @@ import {
   runCli,
   shouldOpenBrowser,
 } from "../src/cli.js";
+import { CliError } from "../src/errors.js";
 import type { ProjectReportQuery, UsageOverview } from "../src/index.js";
 
 describe("CLI project-report", () => {
@@ -788,6 +790,29 @@ describe("parseRequestBudget", () => {
     for (const invalid of ["0", "601", "4.5", "abc", "-1", ""]) {
       expect(() => parseRequestBudget(invalid)).toThrow(/between 1 and 600/);
     }
+  });
+});
+
+describe("assertCredentialResolved", () => {
+  it("passes through when an API key resolved", () => {
+    expect(() => assertCredentialResolved("a-key")).not.toThrow();
+  });
+
+  it("throws a CliError guiding mint plus profile selection when none resolved", () => {
+    let thrown: unknown;
+    try {
+      assertCredentialResolved(undefined);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(CliError);
+    const error = thrown as CliError;
+    expect(error.headline).toBe("No Neon credential found");
+    // Minting alone leaves the user on the DEFAULT profile, so the fix must
+    // name the selection step or the advice loops back to the same error.
+    expect(error.fix).toContain("neon profile create <name> --mint");
+    expect(error.fix).toContain("neon-usage --profile <name>");
+    expect(error.fix).not.toContain("--api-key");
   });
 });
 

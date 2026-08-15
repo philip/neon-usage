@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CliError } from "../src/errors.js";
 import { resolveNeonCliContext } from "../src/neon-cli-context.js";
 
 const temporaryDirectories: string[] = [];
@@ -270,6 +271,30 @@ describe("Neon CLI context", () => {
     expect(() =>
       resolveNeonCliContext({ cwd: directory, env: {}, configDir: configDirectory }),
     ).toThrow(/expired.*neon auth.*NEON_API_KEY/s);
+  });
+
+  it("throws a structured CliError whose fix completes the minted-profile step", () => {
+    const directory = temporaryDirectory();
+    const configDirectory = join(directory, "config");
+    mkdirSync(configDirectory);
+    writeFileSync(
+      join(configDirectory, "credentials.json"),
+      JSON.stringify({ type: "oauth", access_token: "stale", expires_at: Date.now() - 60_000 }),
+    );
+
+    let thrown: unknown;
+    try {
+      resolveNeonCliContext({ cwd: directory, env: {}, configDir: configDirectory });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(CliError);
+    const error = thrown as CliError;
+    expect(error.headline).toBe("Neon login expired");
+    // Minting alone leaves the user on the DEFAULT profile; the fix must tell
+    // them to select the new one, or the advice loops back to the same error.
+    expect(error.fix).toContain("neon profile create <name> --mint");
+    expect(error.fix).toContain("neon-usage --profile <name>");
   });
 
   it("accepts a stored OAuth login that has not expired", () => {

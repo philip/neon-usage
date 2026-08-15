@@ -10,6 +10,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { parseEnv } from "node:util";
+import { CliError } from "./errors.js";
 
 export type NeonCliContextOptions = {
   cwd: string;
@@ -130,7 +131,7 @@ export function diagnoseNeonCliContext(options: NeonCliContextOptions): NeonCliD
             state: "missing",
             profile,
             detail:
-              "no credential found; set NEON_API_KEY, add it to .env.local, pass --api-key, or run `neon auth`",
+              "no credential found; run `neon auth`, or mint a profile with `neon profile create <name> --mint` then `neon-usage --profile <name>`; a NEON_API_KEY in .env.local also works",
           };
     }
   } catch (error) {
@@ -302,7 +303,11 @@ function readStoredCredentialDetail(
   const accessToken = nonEmpty(credential.access_token);
   if (credential.type === "api_key") {
     if (apiKey) return { value: apiKey, kind: "api_key", path: credentialsPath };
-    throw new Error(`${credentialsPath} declares an API key but contains no api_key value`);
+    throw new CliError({
+      headline: "Malformed Neon credentials file",
+      detail: `${credentialsPath} declares an API key but contains no api_key value.`,
+      fix: "Run `neon auth` to replace it, or put a NEON_API_KEY in .env.local.",
+    });
   }
   if (credential.type === undefined || credential.type === "oauth") {
     // OAuth access tokens expire (~hourly). The Neon CLI refreshes them with the
@@ -310,10 +315,15 @@ function readStoredCredentialDetail(
     // surface as an opaque HTTP 401. Detect it from expires_at and say so.
     const expiresAt = parseExpiry(credential.expires_at);
     if (expiresAt !== null && expiresAt <= Date.now()) {
-      throw new Error(
-        `The stored Neon login at ${credentialsPath} expired at ${new Date(expiresAt).toISOString()}. ` +
-          "Run `neon auth` (or any `neon` command) to refresh it, or set NEON_API_KEY — API keys do not expire.",
-      );
+      const when = `${new Date(expiresAt).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+      throw new CliError({
+        headline: "Neon login expired",
+        detail: `The stored login at ${credentialsPath} expired at ${when}.`,
+        fix:
+          "Run `neon auth` to refresh it, or mint a profile: `neon profile create <name> --mint` " +
+          "then `neon-usage --profile <name>`. A NEON_API_KEY in .env.local also works and " +
+          "does not expire.",
+      });
     }
     return accessToken
       ? {
@@ -324,9 +334,11 @@ function readStoredCredentialDetail(
         }
       : undefined;
   }
-  throw new Error(
-    `${credentialsPath} declares an unsupported credential type; run \`neon auth\` to replace it`,
-  );
+  throw new CliError({
+    headline: "Unsupported Neon credential type",
+    detail: `${credentialsPath} declares an unsupported credential type.`,
+    fix: "Run `neon auth` to replace it.",
+  });
 }
 
 /**
