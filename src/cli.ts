@@ -3,7 +3,12 @@ import { createRequire } from "node:module";
 import { Command, InvalidArgumentError, Option } from "commander";
 // Adapter and composition modules are imported directly, not via the domain barrel.
 import { defaultAssetsDirectory, startDashboardServer } from "./dashboard-server.js";
-import { createNeonDependencies, defaultStorePath } from "./default-dependencies.js";
+import {
+  createNeonDependencies,
+  DEFAULT_REQUEST_BUDGET,
+  defaultStorePath,
+  MAX_REQUEST_BUDGET,
+} from "./default-dependencies.js";
 import { createDemoDependencies } from "./demo-dependencies.js";
 import { createDoctorReport, renderDoctorReport } from "./doctor.js";
 import {
@@ -103,14 +108,16 @@ function eagerValidated(validate: (value: string) => void): (value: string) => s
   };
 }
 
-/** Parses --request-budget: whole requests per minute, bounded 1-600. */
+/** Parses --request-budget: whole requests per minute, bounded 1 to MAX_REQUEST_BUDGET. */
 export function parseRequestBudget(
   value: string | undefined,
 ): { limit: number; intervalMs: number } | undefined {
   if (value === undefined) return undefined;
   const limit = Number(value);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 600) {
-    throw new Error("--request-budget must be an integer between 1 and 600 requests per minute");
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_REQUEST_BUDGET) {
+    throw new Error(
+      `--request-budget must be an integer between 1 and ${MAX_REQUEST_BUDGET} requests per minute`,
+    );
   }
   return { limit, intervalMs: 60_000 };
 }
@@ -202,7 +209,7 @@ export async function runCli(
     )
     .option(
       "--request-budget <perMinute>",
-      "Neon API requests per minute, 1-600 (default 45; raising it risks provider rate limits)",
+      `Neon API requests per minute, 1-${MAX_REQUEST_BUDGET} (default ${DEFAULT_REQUEST_BUDGET.limit}; the account shares ~700/min with the Console, so higher values risk rate limits)`,
       eagerValidated((value) => parseRequestBudget(value)),
     )
     .option(

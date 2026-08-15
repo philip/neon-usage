@@ -77,7 +77,7 @@ export type NeonDependenciesConfig = {
   collectionBudget?: CollectionBudgetConfig;
   /** Resolved organization/project/branch context, if any. */
   context?: { organizationId?: string; projectId?: string; branch?: string };
-  /** Account request budget; defaults to 45 requests/minute. */
+  /** Account request budget; defaults to {@link DEFAULT_REQUEST_BUDGET}. */
   requestBudget?: { limit: number; intervalMs: number };
   /** Stores opened during the run are pushed here so the caller can close them. */
   openedStores: EvidenceFactStore[];
@@ -86,6 +86,23 @@ export type NeonDependenciesConfig = {
   /** Emits best-effort enrichment failures (name recording) for debugging. */
   onDebug?: (message: string) => void;
 };
+
+/**
+ * The built-in account request budget when no `--request-budget` is given: 180
+ * requests/minute. Neon allows ~700/minute per account (shared with the Console
+ * and every other client), and the per-project fan-out is concurrency-capped, so
+ * this leaves ample headroom while not throttling large organizations to a crawl.
+ * The single source of truth; `doctor` and the CLI help read it from here.
+ */
+export const DEFAULT_REQUEST_BUDGET = Object.freeze({ limit: 180, intervalMs: 60_000 } as const);
+
+/**
+ * Upper bound accepted for `--request-budget`, in requests/minute. A guardrail
+ * that stays under Neon's ~700/minute account ceiling so no single dial can, on
+ * its own, exceed the account's shared limit. The single source of truth for the
+ * range check, its error message, and the CLI help.
+ */
+export const MAX_REQUEST_BUDGET = 600;
 
 /**
  * Builds the real Neon-backed ReportDependencies: collecting and reading
@@ -133,7 +150,7 @@ export function createNeonDependencies(config: NeonDependenciesConfig): ReportDe
   };
 
   const requestCoordinator = createSlidingWindowRequestCoordinator(
-    config.requestBudget ?? { limit: 45, intervalMs: 60_000 },
+    config.requestBudget ?? DEFAULT_REQUEST_BUDGET,
   );
   const collectingSource = createNeonApiSource({
     apiKey,
