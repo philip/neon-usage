@@ -1,6 +1,6 @@
 {
   "name": "neon-usage",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "workspaces": [
     "dashboard"
@@ -16,6 +16,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "SECURITY.md",
     "LICENSE",
     "NOTICE",
