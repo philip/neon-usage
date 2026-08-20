@@ -284,10 +284,19 @@ function readStoredCredentialDetail(
   // rather than hard-coding a path. A broken or absent entry is tolerated only
   // for DEFAULT, which then falls back to a bare credentials.json.
   let credentialsPath: string | undefined;
+  // Any profile may legitimately keep its credential in the OS keyring, which
+  // this tool does not read (yet — keyring support may come later). A named
+  // profile throws straight out of credentialFromProfiles; DEFAULT first tries
+  // the bare credentials.json fallback, and a held user-facing error (today
+  // only the keyring one) is rethrown when no readable file exists, so the
+  // user learns where the login actually lives instead of a generic "no
+  // credential found".
+  let heldCliError: CliError | undefined;
   try {
     credentialsPath = credentialFromProfiles(profile, currentDir, legacyDir, confineRoot);
   } catch (error) {
     if (profile !== "DEFAULT") throw error;
+    if (error instanceof CliError) heldCliError = error;
     credentialsPath = undefined;
   }
   if (profile === "DEFAULT" && (!credentialsPath || !existsSync(credentialsPath))) {
@@ -297,7 +306,10 @@ function readStoredCredentialDetail(
     ]);
   }
 
-  if (!credentialsPath || !existsSync(credentialsPath)) return undefined;
+  if (!credentialsPath || !existsSync(credentialsPath)) {
+    if (heldCliError) throw heldCliError;
+    return undefined;
+  }
   const credential = readJsonObject(credentialsPath);
   const apiKey = nonEmpty(credential.api_key);
   const accessToken = nonEmpty(credential.access_token);
@@ -367,6 +379,12 @@ function credentialFromProfiles(
     if (profile === "DEFAULT") return undefined;
     throw new Error(`Neon profile "${profile}" has no credentials path`);
   }
+  // The Neon CLI writes the literal sentinel "keyring" (KEYRING_CREDENTIALS in
+  // its source) when `neon auth --keyring` stores the credential in the OS
+  // keyring instead of a file. There is nothing on disk to read in that case.
+  // Compare the raw value: the CLI matches it exactly, so a padded " keyring "
+  // is a (strange) file name to both, not the sentinel.
+  if (entry.credentials === "keyring") throw keyringCredentialError(profile);
   const configRoot = dirname(profilesPath);
   const credentialsPath = isAbsolute(pointer) ? pointer : resolve(configRoot, pointer);
   // Confine by real path, not just the lexical string: a symlink inside the
@@ -380,6 +398,19 @@ function credentialFromProfiles(
     throw new Error(`Neon profile "${profile}" credentials path escapes ${confineRoot}`);
   }
   return credentialsPath;
+}
+
+function keyringCredentialError(profile: string): CliError {
+  return new CliError({
+    headline: "Neon login is stored in the OS keyring",
+    detail:
+      `Profile ${profile} keeps its credential in the system keyring, which neon-usage ` +
+      "cannot read — only file-backed credentials work.",
+    fix:
+      "Use a file-backed profile: put `NEON_PROFILE=<name>` in .env.local or pass " +
+      "`--profile <name>`; mint one if needed with `neon profile create <name> --mint`. " +
+      "A NEON_API_KEY in .env.local also works and does not expire.",
+  });
 }
 
 /**

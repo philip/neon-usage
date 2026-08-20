@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CliError } from "../src/errors.js";
-import { resolveNeonCliContext } from "../src/neon-cli-context.js";
+import { diagnoseNeonCliContext, resolveNeonCliContext } from "../src/neon-cli-context.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -323,6 +323,118 @@ describe("Neon CLI context", () => {
     expect(
       resolveNeonCliContext({ cwd: directory, env: {}, configDir: configDirectory }),
     ).toMatchObject({ apiKey: "no-expiry" });
+  });
+
+  it("explains a DEFAULT login held in the OS keyring instead of claiming none exists", () => {
+    // `neon auth --keyring` writes `"credentials": "keyring"` into profiles.json
+    // and deletes the credential file. Resolution must name the keyring as the
+    // reason — the generic "no credential" fix suggests `neon auth`, which
+    // would keep the credential in the keyring and change nothing.
+    const home = temporaryDirectory();
+    const neonDir = join(home, "neon");
+    mkdirSync(neonDir);
+    writeFileSync(
+      join(neonDir, "profiles.json"),
+      JSON.stringify({ version: 1, profiles: { DEFAULT: { credentials: "keyring" } } }),
+    );
+
+    let thrown: unknown;
+    try {
+      resolveNeonCliContext({ cwd: home, env: { XDG_CONFIG_HOME: home } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(CliError);
+    const error = thrown as CliError;
+    expect(error.headline).toBe("Neon login is stored in the OS keyring");
+    expect(error.fix).toContain("NEON_PROFILE=<name>");
+    expect(error.fix).toContain("neon profile create <name> --mint");
+  });
+
+  it("explains a named profile held in the OS keyring", () => {
+    const home = temporaryDirectory();
+    const neonDir = join(home, "neon");
+    mkdirSync(neonDir);
+    writeFileSync(
+      join(neonDir, "profiles.json"),
+      JSON.stringify({ version: 1, profiles: { work: { credentials: "keyring" } } }),
+    );
+
+    expect(() =>
+      resolveNeonCliContext({ cwd: home, env: { XDG_CONFIG_HOME: home }, profile: "work" }),
+    ).toThrow(/keyring/);
+  });
+
+  it("still uses a bare credentials.json when DEFAULT points at the keyring", () => {
+    // Transitional state: the pointer says keyring but a credential file
+    // survives (e.g. the CLI could not delete it). The readable file wins over
+    // an error about the unreadable keyring.
+    const home = temporaryDirectory();
+    const neonDir = join(home, "neon");
+    mkdirSync(neonDir);
+    writeFileSync(
+      join(neonDir, "profiles.json"),
+      JSON.stringify({ version: 1, profiles: { DEFAULT: { credentials: "keyring" } } }),
+    );
+    writeFileSync(
+      join(neonDir, "credentials.json"),
+      JSON.stringify({ type: "api_key", api_key: "surviving-file-key" }),
+    );
+
+    expect(resolveNeonCliContext({ cwd: home, env: { XDG_CONFIG_HOME: home } })).toMatchObject({
+      apiKey: "surviving-file-key",
+    });
+  });
+
+  it("still uses a legacy neonctl credential when DEFAULT points at the keyring", () => {
+    const home = temporaryDirectory();
+    const neonDir = join(home, "neon");
+    const legacyDir = join(home, "neonctl");
+    mkdirSync(neonDir);
+    mkdirSync(legacyDir);
+    writeFileSync(
+      join(neonDir, "profiles.json"),
+      JSON.stringify({ version: 1, profiles: { DEFAULT: { credentials: "keyring" } } }),
+    );
+    writeFileSync(
+      join(legacyDir, "credentials.json"),
+      JSON.stringify({ type: "oauth", access_token: "legacy-oauth" }),
+    );
+
+    expect(resolveNeonCliContext({ cwd: home, env: { XDG_CONFIG_HOME: home } })).toMatchObject({
+      apiKey: "legacy-oauth",
+    });
+  });
+
+  it("reports a keyring-held login through the doctor diagnosis", () => {
+    const home = temporaryDirectory();
+    const neonDir = join(home, "neon");
+    mkdirSync(neonDir);
+    writeFileSync(
+      join(neonDir, "profiles.json"),
+      JSON.stringify({ version: 1, profiles: { DEFAULT: { credentials: "keyring" } } }),
+    );
+
+    const diagnosis = diagnoseNeonCliContext({ cwd: home, env: { XDG_CONFIG_HOME: home } });
+    expect(diagnosis.credential.state).toBe("error");
+    expect(diagnosis.credential.detail).toContain("OS keyring");
+    expect(diagnosis.credential.detail).toContain("NEON_PROFILE=<name>");
+  });
+
+  it("does not treat a padded ' keyring ' pointer as the keyring sentinel", () => {
+    const home = temporaryDirectory();
+    const neonDir = join(home, "neon");
+    mkdirSync(neonDir);
+    writeFileSync(
+      join(neonDir, "profiles.json"),
+      JSON.stringify({ version: 1, profiles: { work: { credentials: " keyring " } } }),
+    );
+
+    // Not the sentinel, so resolution follows it as a (missing) file path and
+    // reports nothing rather than a keyring-held login.
+    expect(
+      resolveNeonCliContext({ cwd: home, env: { XDG_CONFIG_HOME: home }, profile: "work" }),
+    ).not.toHaveProperty("apiKey");
   });
 
   it("rejects unknown stored credential types", () => {
