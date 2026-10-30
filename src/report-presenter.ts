@@ -11,6 +11,10 @@ const metricHeaders: Record<string, string> = {
   public_network_transfer_bytes: "PUB GB",
   private_network_transfer_bytes: "PRIV GB",
   extra_branches_month: "BRANCH·h",
+  functions_active_capacity_microseconds: "FN ACTIVE h",
+  functions_waiting_capacity_microseconds: "FN WAIT h",
+  functions_invocations: "FN INVOCATIONS",
+  functions_egress_bytes: "FN EGRESS GB",
 };
 
 function formatDisplay(value: string): string {
@@ -62,6 +66,7 @@ export function renderHistoryTable(report: ProjectConsumptionReport): string {
       start.replace(":00:00Z", "Z").replace("T00Z", "").slice(0, 16),
       ...metrics.map((metric) => {
         const raw = (totals.get(metric) ?? 0n).toString();
+        if (metric === "functions_invocations") return raw;
         return Object.hasOwn(metricCatalog, metric)
           ? formatDisplay(deriveBillingValue(metric, raw).decimalApproximation)
           : raw;
@@ -94,6 +99,9 @@ export function renderHistoryTable(report: ProjectConsumptionReport): string {
   ];
   if (report.coverage.status !== "complete") {
     output.push("", "Warning: coverage is partial; rows may be incomplete");
+  }
+  if (metrics.includes("functions_egress_bytes")) {
+    output.push("", "Note: Functions egress shares the public transfer allowance.");
   }
   return `${output.join("\n")}\n`;
 }

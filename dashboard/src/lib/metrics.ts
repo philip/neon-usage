@@ -14,9 +14,24 @@ export function metricInfo(name: string): MetricInfo {
 }
 
 const NUMBER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+const TABLE_INTEGER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const TABLE_TENTHS = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+const TABLE_HUNDREDTHS = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+const COMPACT_TABLE_NUMBER = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 export function formatQuantity(value: number): string {
   return NUMBER.format(value);
+}
+
+export function formatCompactQuantity(value: number): string {
+  const magnitude = Math.abs(value);
+  if (magnitude >= 10_000) return COMPACT_TABLE_NUMBER.format(value);
+  if (magnitude >= 1000) return TABLE_INTEGER.format(value);
+  if (magnitude >= 100) return TABLE_TENTHS.format(value);
+  return TABLE_HUNDREDTHS.format(value);
 }
 
 /** Raw metric string -> display-unit number, for plotting only. */

@@ -1,14 +1,8 @@
 import { BranchUsageTable } from "@/components/branch-usage-table/branch-usage-table";
 import { CollectingNotice } from "@/components/coverage-banner";
 import type { PricingEstimate, UsageOverview } from "@/lib/api";
-import { formatQuantity, metricInfo } from "@/lib/metrics";
+import { projectUsageColumns } from "@/lib/project-usage-columns";
 import { cn } from "@/lib/utils";
-
-const CURRENCY = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 2,
-});
 
 export type UsageFormat = "gb" | "price";
 
@@ -69,7 +63,14 @@ export function UsageSection({
 
   // Columns: metrics any project actually used this window (quantities), or
   // metrics any line actually billed (prices); compute always leads.
-  let columns: Array<{ id: string; label: string; unit?: string; format?: (v: number) => string }>;
+  let columns: Array<{
+    id: string;
+    label: string;
+    description?: string;
+    group?: string;
+    unit?: string;
+    format?: (v: number) => string;
+  }>;
   let rows: Array<{ id: string; name: string; metrics: Record<string, number>; hint?: string }>;
   if (priceMode) {
     const perProject = new Map<string, Record<string, number>>();
@@ -82,12 +83,7 @@ export function UsageSection({
       metrics[line.metric] = (metrics[line.metric] ?? 0) + amount;
       perProject.set(line.projectId, metrics);
     }
-    columns = [...billedMetrics].slice(0, 6).map((name) => ({
-      id: name,
-      label: metricInfo(name).label,
-      unit: "USD",
-      format: (value: number) => CURRENCY.format(value),
-    }));
+    columns = projectUsageColumns(billedMetrics, true);
     rows = [...perProject.entries()].map(([projectId, metrics]) => namedRow(projectId, metrics));
   } else if (derived) {
     const usedMetrics = new Set<string>(["compute_unit_seconds"]);
@@ -96,12 +92,7 @@ export function UsageSection({
         if (value > 0) usedMetrics.add(name);
       }
     }
-    columns = [...usedMetrics].slice(0, 6).map((name) => ({
-      id: name,
-      label: metricInfo(name).label,
-      unit: metricInfo(name).unit,
-      format: formatQuantity,
-    }));
+    columns = projectUsageColumns(usedMetrics, false);
     rows = derived.rows.map((row) => namedRow(row.projectId, row.metrics));
   } else {
     const usedMetrics = new Set<string>(["compute_unit_seconds"]);
@@ -110,12 +101,7 @@ export function UsageSection({
         if (Number(metric.displayValue) > 0) usedMetrics.add(metric.name);
       }
     }
-    columns = [...usedMetrics].slice(0, 6).map((name) => ({
-      id: name,
-      label: metricInfo(name).label,
-      unit: metricInfo(name).unit,
-      format: formatQuantity,
-    }));
+    columns = projectUsageColumns(usedMetrics, false);
     rows = (overview?.activeProjects ?? []).map((project) =>
       namedRow(
         project.projectId,

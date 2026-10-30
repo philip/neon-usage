@@ -154,6 +154,11 @@ function demoPeriods(project: DemoProject, query: ProjectReportQuery): BarePerio
     public_network_transfer_bytes: project.egressBytesPerDay,
     private_network_transfer_bytes: 0,
     extra_branches_month: project.branchHoursPerDay,
+    functions_active_capacity_microseconds: 7.2e9,
+    functions_waiting_capacity_microseconds: 36e9,
+    functions_invocations: 50_000,
+    // Separate Functions meter that shares the public transfer allowance.
+    functions_egress_bytes: project.egressBytesPerDay * 0.1,
   };
   // One period per calendar month, like real monthly billing: a
   // multi-month query must not pool every bucket into one period.

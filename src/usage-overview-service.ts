@@ -11,6 +11,7 @@ import {
   type OrganizationConsumptionSummary,
 } from "./history-report.js";
 import { deriveBillingValue } from "./metric-catalog.js";
+import { METRICS } from "./metric-presentation.js";
 import type { OperationContext } from "./operation-context.js";
 import { isCancellationFailure, throwIfAborted } from "./operation-context.js";
 import { isIntegrityFailure } from "./report-support.js";
@@ -114,8 +115,11 @@ export function createUsageOverviewService(
               name,
               rawValue,
               rawUnit: metric.unit,
-              displayValue: derived.decimalApproximation,
-              displayUnit: derived.unit,
+              displayValue: METRICS[name]?.divisor === 1 ? rawValue : derived.decimalApproximation,
+              displayUnit:
+                name === "functions_invocations"
+                  ? (METRICS[name]?.unit ?? derived.unit)
+                  : derived.unit,
             };
           });
         if (metrics.length > 0) {

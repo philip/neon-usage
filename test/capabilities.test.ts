@@ -93,25 +93,29 @@ describe("CapabilityService.inspect", () => {
   });
 
   it.each([
-    ["agent", "supported"],
-    ["business", "unknown"],
-    ["enterprise", "supported"],
-  ] as const)("preserves documented %s plan capabilities", async (plan, branchHistory) => {
-    const source: OrganizationSource = {
-      getOrganization: async () => ({ id: "org-1", plan }),
-      probeProjectHistory: async () => "available",
-    };
+    ["agent", "supported", "supported"],
+    ["business", "unknown", "unknown"],
+    ["enterprise", "supported", "unknown"],
+  ] as const)(
+    "preserves documented %s plan capabilities",
+    async (plan, branchHistory, metricsExport) => {
+      const source: OrganizationSource = {
+        getOrganization: async () => ({ id: "org-1", plan }),
+        probeProjectHistory: async () => "available",
+      };
 
-    const result = await createCapabilityService(source).inspect("org-1");
+      const result = await createCapabilityService(source).inspect("org-1");
 
-    expect(result.declaredPlan).toEqual({ raw: plan, family: plan });
-    expect(result.capabilities).toMatchObject({
-      projectHistory: "supported",
-      branchHistory,
-      spendingNotifications: "unknown",
-    });
-    expect(result.observedAvailability).toEqual({ projectHistory: "available" });
-  });
+      expect(result.declaredPlan).toEqual({ raw: plan, family: plan });
+      expect(result.capabilities).toMatchObject({
+        projectHistory: "supported",
+        branchHistory,
+        spendingNotifications: "unknown",
+        metricsExport,
+      });
+      expect(result.observedAvailability).toEqual({ projectHistory: "available" });
+    },
+  );
 
   it("probes an unrecognized plan without guessing its declared capabilities", async () => {
     const source: OrganizationSource = {

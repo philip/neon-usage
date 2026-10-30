@@ -24,7 +24,7 @@ export type PricingApproximation =
    * card's rates were applied anyway, so historical prices may have differed. */
   | "RATE_CARD_DATE_EXTRAPOLATION"
   /** The plan's rates/allowances are documented defaults assumed from another
-   * plan (Agent, Enterprise); negotiated or custom terms may differ. */
+   * plan; negotiated or custom terms may differ. */
   | "PLAN_RATES_ASSUMED";
 
 export type PricingLineStatus = "estimated" | "not_billed" | "unavailable";
@@ -104,6 +104,7 @@ const EXCLUSIONS = Object.freeze([
   "taxes",
   "minimum_invoice_collection",
   "custom_contract_terms",
+  "object_storage_egress",
   "billing_snapshot_timing",
   "rounding_differences",
 ]);
@@ -375,7 +376,6 @@ export function estimateProjectCosts(
         }
         continue;
       }
-
       // Net allowances in raw units before conversion.
       let billableRaw: Fraction = { numerator: raw, denominator: 1n };
       const allowance = plan.allowances.find((candidate) => candidate.metric === metric);
@@ -383,7 +383,7 @@ export function estimateProjectCosts(
         const quantity = BigInt(allowance.rawQuantityPerBillingPeriod);
         const owner =
           allowance.scope === "per_project" ? usage.projectId : report.query.organizationId;
-        const key = `${usage.allowanceWindow.start}:${metric}:${allowance.scope}:${owner}:${quantity}:${allowance.sourceUrl}`;
+        const key = `${usage.allowanceWindow.start}:${allowance.sharedPool ?? metric}:${allowance.scope}:${owner}:${quantity}:${allowance.sourceUrl}`;
         const remaining = allowanceRemaining.get(key) ?? quantity;
         const applied = raw < remaining ? raw : remaining;
         allowanceRemaining.set(key, remaining - applied);

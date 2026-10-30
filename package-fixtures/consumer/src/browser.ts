@@ -11,6 +11,12 @@ import {
 const exact = deriveBillingValue("compute_unit_seconds", "3600").exact;
 if (exact.numerator !== "1" || exact.denominator !== "1")
   throw new Error("Browser exact arithmetic failed");
+const functionHour = deriveBillingValue(
+  "functions_active_capacity_microseconds",
+  "3600000000",
+).exact;
+if (functionHour.numerator !== "1" || functionHour.denominator !== "1")
+  throw new Error("Browser Functions conversion failed");
 let rejected = false;
 try {
   parseMeasuredBillingUsage({});
@@ -21,7 +27,8 @@ if (
   !rejected ||
   MEASURED_USAGE_KIND !== "measured_billing_usage" ||
   MEASURED_USAGE_SCHEMA_VERSION !== 2 ||
-  !metricDefinitions.compute_unit_seconds
+  !metricDefinitions.compute_unit_seconds ||
+  !metricDefinitions.functions_invocations
 )
   throw new Error("Browser contracts fixture failed");
 export const parse: (input: unknown) => MeasuredBillingUsage = parseMeasuredBillingUsage;

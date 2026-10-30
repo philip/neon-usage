@@ -12,10 +12,9 @@ import { neonDocumentationRateCard } from "../src/rate-card.js";
 
 const now = () => new Date("2026-08-09T12:00:00Z");
 
-// The real card takes effect 2026-08-08, mid-way through the fixture window
-// (2026-08-02 → 2026-08-09). Pricing-math tests use a card that fully covers
-// the window so they exercise rates and allowances, not date extrapolation;
-// the straddle behavior itself is tested explicitly below.
+// The real card takes effect after the fixture window. Pricing-math tests use
+// a card that fully covers the window so they exercise rates and allowances,
+// not date extrapolation; the straddle behavior itself is tested below.
 const coveringRateCard = { ...neonDocumentationRateCard, effectiveFrom: "2026-08-01" };
 
 type ProjectUsage = {
@@ -208,7 +207,8 @@ describe("estimateProjectCosts", () => {
 
     expect(estimate.disposition).toBe("estimate");
     expect(estimate.status).toBe("estimated");
-    expect(estimate.rateCard.revision).toBe("neon-docs-2026-08-08");
+    expect(estimate.rateCard.revision).toBe("neon-docs-2026-10-30");
+    expect(neonDocumentationRateCard.effectiveFrom).toBe("2026-10-30");
     const compute = estimate.lines.find((line) => line.metric === "compute_unit_seconds");
     expect(compute).toMatchObject({
       status: "estimated",
@@ -325,7 +325,7 @@ describe("estimateProjectCosts", () => {
     expect(estimate.totalAmount?.decimalApproximation).toBe("0");
   });
 
-  it("nets the Free organization-wide transfer allowance informationally", () => {
+  it("nets the Free transfer allowance per project informationally", () => {
     const estimate = estimateProjectCosts(
       report([
         {
@@ -343,8 +343,8 @@ describe("estimateProjectCosts", () => {
       { now },
     );
 
-    // One shared 5 GB organization pool: the first project nets 3 GB, the
-    // second only the remaining 2 GB. Amounts stay zero (Free is not billed).
+    // Each project receives its own 5 GB allowance. Amounts stay zero because
+    // Free usage is not billed.
     expect(
       estimate.lines.map((line) => ({
         project: line.projectId,
@@ -357,20 +357,46 @@ describe("estimateProjectCosts", () => {
         applied: {
           rawQuantity: "3000000000",
           exact: { numerator: "3000000000", denominator: "1" },
-          scope: "per_organization",
+          scope: "per_project",
         },
         amount: "0",
       },
       {
         project: "free-b",
         applied: {
-          rawQuantity: "2000000000",
-          exact: { numerator: "2000000000", denominator: "1" },
-          scope: "per_organization",
+          rawQuantity: "4000000000",
+          exact: { numerator: "4000000000", denominator: "1" },
+          scope: "per_project",
         },
         amount: "0",
       },
     ]);
+    expect(estimate.totalAmount?.decimalApproximation).toBe("0");
+  });
+
+  it("nets the Free Functions allowances per project informationally", () => {
+    const estimate = estimateProjectCosts(
+      report([
+        {
+          projectId: "free-project",
+          plan: "free",
+          metrics: {
+            functions_active_capacity_microseconds: "39600000000",
+            functions_waiting_capacity_microseconds: "1443600000000",
+            functions_invocations: "1500000",
+          },
+        },
+      ]),
+      coveringRateCard,
+      { now },
+    );
+
+    expect(estimate.lines.map((line) => line.allowanceApplied?.rawQuantity)).toEqual([
+      "36000000000",
+      "1440000000000",
+      "1000000",
+    ]);
+    expect(estimate.lines.every((line) => line.status === "not_billed")).toBe(true);
     expect(estimate.totalAmount?.decimalApproximation).toBe("0");
   });
 
@@ -399,20 +425,48 @@ describe("estimateProjectCosts", () => {
     expect(estimate.totalAmount).toBeNull();
   });
 
-  it("prices Agent and Enterprise as best-effort defaults instead of refusing", () => {
-    for (const [plan, computeRate] of [
-      ["agent", "0.106"],
-      ["enterprise", "0.222"],
-    ] as const) {
-      const estimate = estimateProjectCosts(
-        report([{ projectId: "p", plan, metrics: { compute_unit_seconds: "36000" } }]),
-        coveringRateCard,
-        { now },
-      );
-      expect(estimate.status).toBe("estimated");
-      expect(estimate.lines[0]).toMatchObject({ status: "estimated", ratePerUnit: computeRate });
-      expect(estimate.totalAmount).not.toBeNull();
-    }
+  it("prices published Agent rates", () => {
+    const agent = estimateProjectCosts(
+      report([{ projectId: "p", plan: "agent", metrics: { compute_unit_seconds: "36000" } }]),
+      coveringRateCard,
+      { now },
+    );
+    expect(agent.status).toBe("estimated");
+    expect(agent.lines[0]).toMatchObject({ status: "estimated", ratePerUnit: "0.106" });
+  });
+
+  it("uses labeled Scale defaults for Enterprise, including Functions", () => {
+    const enterprise = estimateProjectCosts(
+      report([
+        {
+          projectId: "p",
+          plan: "enterprise",
+          metrics: {
+            compute_unit_seconds: "36000",
+            public_network_transfer_bytes: "600000000000",
+            functions_active_capacity_microseconds: "3600000000",
+            functions_waiting_capacity_microseconds: "3600000000",
+            functions_invocations: "1000000",
+            functions_egress_bytes: "200000000000",
+          },
+        },
+      ]),
+      coveringRateCard,
+      { now },
+    );
+    expect(enterprise.status).toBe("estimated");
+    expect(enterprise.lines.every((line) => line.status === "estimated")).toBe(true);
+    expect(
+      enterprise.lines.every((line) => line.approximations.includes("PLAN_RATES_ASSUMED")),
+    ).toBe(true);
+    expect(enterprise.lines.map((line) => line.amount?.decimalApproximation)).toEqual([
+      "2.22",
+      "10",
+      "0.12",
+      "0.03",
+      "0.6",
+      "20",
+    ]);
   });
 
   it("nets the Agent plan's 100 GB public-transfer allowance, not Scale's 500 GB", () => {
@@ -437,6 +491,141 @@ describe("estimateProjectCosts", () => {
       allowanceApplied: { rawQuantity: "100000000000", scope: "per_project" },
       billable: { value: "50", unit: "gb" },
       amount: { decimalApproximation: "5" },
+    });
+  });
+
+  it("does not inherit unpublished Agent rates from Scale", () => {
+    const estimate = estimateProjectCosts(
+      report([
+        {
+          projectId: "agent-project",
+          plan: "agent",
+          metrics: {
+            private_network_transfer_bytes: "1000000000",
+            extra_branches_month: "1",
+          },
+        },
+      ]),
+      coveringRateCard,
+      { now },
+    );
+
+    expect(estimate.lines).toEqual([
+      expect.objectContaining({ status: "unavailable", unavailableReason: "RATE_NOT_PUBLISHED" }),
+      expect.objectContaining({ status: "unavailable", unavailableReason: "RATE_NOT_PUBLISHED" }),
+    ]);
+    expect(estimate.totalAmount).toBeNull();
+  });
+
+  it.each([
+    ["launch", "0.1", "0.025", "0.6"],
+    ["scale", "0.12", "0.03", "0.6"],
+  ] as const)(
+    "prices published %s Functions usage",
+    (plan, activeAmount, waitingAmount, invocationAmount) => {
+      const estimate = estimateProjectCosts(
+        report([
+          {
+            projectId: "functions-project",
+            plan,
+            metrics: {
+              functions_active_capacity_microseconds: "3600000000",
+              functions_waiting_capacity_microseconds: "3600000000",
+              functions_invocations: "1000000",
+            },
+          },
+        ]),
+        coveringRateCard,
+        { now },
+      );
+
+      expect(estimate.lines.map((line) => line.amount?.decimalApproximation)).toEqual([
+        activeAmount,
+        waitingAmount,
+        invocationAmount,
+      ]);
+      expect(estimate.lines.map((line) => line.billable?.unit)).toEqual([
+        "capacity_hour",
+        "capacity_hour",
+        "million_invocations",
+      ]);
+    },
+  );
+
+  it("shares the public transfer allowance with Functions egress regardless of metric order", () => {
+    for (const metrics of [
+      ["public_network_transfer_bytes", "functions_egress_bytes"],
+      ["functions_egress_bytes", "public_network_transfer_bytes"],
+    ]) {
+      const estimate = estimateProjectCosts(
+        report(
+          [
+            {
+              projectId: "functions-project",
+              plan: "launch",
+              metrics: {
+                // Separate meters draw from one 500 GB per-project allowance.
+                public_network_transfer_bytes: "600000000000",
+                functions_egress_bytes: "200000000000",
+              },
+            },
+          ],
+          { metrics },
+        ),
+        coveringRateCard,
+        { now },
+      );
+      expect(
+        estimate.lines.reduce(
+          (total, line) => total + BigInt(line.allowanceApplied?.rawQuantity ?? "0"),
+          0n,
+        ),
+      ).toBe(500000000000n);
+      expect(estimate.lines.map((line) => line.ratePerUnit)).toEqual(["0.10", "0.10"]);
+      expect(estimate.totalAmount?.decimalApproximation).toBe("30");
+      expect(renderEstimateTable(estimate)).toMatch(/Functions egress\s+\$\d/);
+    }
+  });
+
+  it("prices Functions egress without requiring database public transfer", () => {
+    const estimate = estimateProjectCosts(
+      report([
+        {
+          projectId: "functions-project",
+          plan: "launch",
+          metrics: { functions_egress_bytes: "600000000000" },
+        },
+      ]),
+      coveringRateCard,
+      { now },
+    );
+
+    expect(estimate.lines[0]).toMatchObject({
+      status: "estimated",
+      allowanceApplied: { rawQuantity: "500000000000", scope: "per_project" },
+      billable: { value: "100", unit: "gb" },
+      ratePerUnit: "0.10",
+      amount: { decimalApproximation: "10" },
+    });
+    expect(estimate.totalAmount?.decimalApproximation).toBe("10");
+  });
+
+  it("refuses unpublished Agent Functions rates", () => {
+    const estimate = estimateProjectCosts(
+      report([
+        {
+          projectId: "agent-project",
+          plan: "agent",
+          metrics: { functions_invocations: "1000000" },
+        },
+      ]),
+      coveringRateCard,
+      { now },
+    );
+
+    expect(estimate.lines[0]).toMatchObject({
+      status: "unavailable",
+      unavailableReason: "RATE_NOT_PUBLISHED",
     });
   });
 
@@ -790,6 +979,7 @@ describe("estimateProjectCosts", () => {
     for (const line of estimate.lines) {
       expect(line.approximations).toContain("RATE_CARD_DATE_EXTRAPOLATION");
     }
+    expect(renderPriceTable(estimate)).toContain("Approximations: RATE_CARD_DATE_EXTRAPOLATION");
     expect(estimate.totalAmount).not.toBeNull();
   });
 
@@ -809,8 +999,7 @@ describe("estimateProjectCosts", () => {
   });
 
   it("treats a window straddling the card's start as needing extrapolation", () => {
-    // The real card takes effect 2026-08-08; the fixture window (2026-08-02 →
-    // 2026-08-09) straddles it, so its earlier days are outside the card.
+    // The real card takes effect 2026-10-30, after the fixture window.
     const usage = report([
       { projectId: "project-1", plan: "scale", metrics: { compute_unit_seconds: "36000" } },
     ]);
@@ -849,7 +1038,7 @@ describe("estimateProjectCosts", () => {
 
     const table = renderEstimateTable(estimate);
     expect(table).toContain("not an invoice");
-    expect(table).toContain("neon-docs-2026-08-08");
+    expect(table).toContain("neon-docs-2026-10-30");
     expect(table).toContain("Compute");
     expect(table).toMatch(/TOTAL\s+\$12\.22/);
     expect(table).toContain("Excludes: credits, taxes");
@@ -890,10 +1079,10 @@ describe("estimateProjectCosts", () => {
     const table = renderPriceTable(estimate, new Map([["project-busy", "Busy App"]]));
     expect(table).toContain("not an invoice");
     expect(table).toMatch(
-      /Busy App\s+project-busy\s+\$2\.22\s+\$0\.00\s+\$10\.00\s+\$0\.00\s+\$12\.22/,
+      /Busy App\s+project-busy\s+\$2\.22\s+\$0\.00\s+\$10\.00\s+\$0\.00\s+\$0\.00\s+\$12\.22/,
     );
     expect(table).not.toContain("project-idle");
-    expect(table).toMatch(/TOTAL\s+\$2\.22\s+\$0\.00\s+\$10\.00\s+\$0\.00\s+\$12\.22/);
+    expect(table).toMatch(/TOTAL\s+\$2\.22\s+\$0\.00\s+\$10\.00\s+\$0\.00\s+\$0\.00\s+\$12\.22/);
   });
 
   it("shows priced metrics outside the fixed columns in project rows and totals", () => {
@@ -923,8 +1112,10 @@ describe("estimateProjectCosts", () => {
     const table = renderPriceTable(estimate, new Map([["project-future", "Future"]]));
     expect(table).toContain("OTHER");
     expect(table).toMatch(
-      /Future\s+project-future\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$2\.22\s+\$2\.22/,
+      /Future\s+project-future\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$2\.22\s+\$2\.22/,
     );
-    expect(table).toMatch(/TOTAL\s+\$2\.22\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$2\.22\s+\$4\.44/);
+    expect(table).toMatch(
+      /TOTAL\s+\$2\.22\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$2\.22\s+\$4\.44/,
+    );
   });
 });

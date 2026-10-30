@@ -280,7 +280,7 @@ describe("doctor rendering and CLI wiring", () => {
         maxBytes: 100_000_000,
         source: "built-in default",
       },
-      rateCard: { revision: "neon-docs-2026-08-08", retrievedAt: "2026-08-08" },
+      rateCard: { revision: "neon-docs-2026-10-30", retrievedAt: "2026-10-30" },
     };
     const text = renderDoctorReport(report);
     expect(text).toContain("no Neon API requests");

@@ -18,6 +18,8 @@ const formulas = {
   gb_month: "bytes_month / 1e9",
   gb: "bytes / 1e9",
   branch_month_before_allowance: "branch_hours / 744",
+  capacity_hour: "capacity_microseconds / 3.6e9",
+  million_invocations: "invocations / 1e6",
 };
 
 function metric(name = "compute_unit_seconds", value = "3600") {

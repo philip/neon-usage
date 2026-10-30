@@ -74,6 +74,30 @@ export const metricDefinitions = Object.freeze({
     "extra_branches_month / 744",
     ["history_project"],
   ),
+  functions_active_capacity_microseconds: definition(
+    "capacity_microsecond",
+    3_600_000_000n,
+    "capacity_hour",
+    "functions_active_capacity_microseconds / 3.6e9",
+    ["history_project"],
+  ),
+  functions_waiting_capacity_microseconds: definition(
+    "capacity_microsecond",
+    3_600_000_000n,
+    "capacity_hour",
+    "functions_waiting_capacity_microseconds / 3.6e9",
+    ["history_project"],
+  ),
+  functions_invocations: definition(
+    "invocation",
+    1_000_000n,
+    "million_invocations",
+    "functions_invocations / 1e6",
+    ["history_project"],
+  ),
+  functions_egress_bytes: definition("byte", 1_000_000_000n, "gb", "functions_egress_bytes / 1e9", [
+    "history_project",
+  ]),
   active_time_seconds: definition("second", 3600n, "active_hour", "active_time_seconds / 3600", [
     "snapshot_project",
   ]),
@@ -102,6 +126,10 @@ export const projectConsumptionMetrics = Object.freeze([
   "public_network_transfer_bytes",
   "private_network_transfer_bytes",
   "extra_branches_month",
+  "functions_active_capacity_microseconds",
+  "functions_waiting_capacity_microseconds",
+  "functions_invocations",
+  "functions_egress_bytes",
 ] as const satisfies readonly HistoryProjectMetricName[]);
 
 export const branchConsumptionMetrics = Object.freeze([
@@ -120,4 +148,6 @@ export const baseMetricFormulas: Readonly<Record<string, string>> = Object.freez
   gb_month: "bytes_month / 1e9",
   gb: "bytes / 1e9",
   branch_month_before_allowance: "branch_hours / 744",
+  capacity_hour: "capacity_microseconds / 3.6e9",
+  million_invocations: "invocations / 1e6",
 });

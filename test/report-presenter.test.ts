@@ -71,4 +71,32 @@ describe("renderHistoryTable scope header", () => {
       "· 4 requested projects · 1 observed",
     );
   });
+
+  it("shows Function invocation counts rather than fractional millions", () => {
+    const value = report(["p-1"], ["p-1"]);
+    value.query.metrics = ["functions_invocations"];
+    const metric = value.projects[0]?.periods[0]?.buckets[0]?.metrics[0];
+    if (!metric) throw new Error("missing fixture metric");
+    metric.name = "functions_invocations";
+    metric.value = "42";
+    metric.rawUnit = "invocation";
+
+    const output = renderHistoryTable(value);
+    expect(output).toContain("FN INVOCATIONS");
+    expect(output).toMatch(/2026-08-12\s+42/);
+  });
+
+  it("identifies Functions egress as part of public transfer", () => {
+    const value = report(["p-1"], ["p-1"]);
+    value.query.metrics = ["functions_egress_bytes"];
+    const metric = value.projects[0]?.periods[0]?.buckets[0]?.metrics[0];
+    if (!metric) throw new Error("missing fixture metric");
+    metric.name = "functions_egress_bytes";
+    metric.value = "1000000000";
+    metric.rawUnit = "byte";
+
+    expect(renderHistoryTable(value)).toContain(
+      "Note: Functions egress shares the public transfer allowance.",
+    );
+  });
 });

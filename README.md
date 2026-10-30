@@ -14,17 +14,17 @@ $ npx neon-usage@latest usage --demo --format price
 DEMO MODE: every value is synthetic (fictional organization; no Neon account involved).
 Neon cost estimate · org-demo-42813975 · not an invoice
 Window: 2026-08-01T00:00:00.000Z -> 2026-08-12T00:00:00.000Z UTC · daily
-Rate card: neon-docs-2026-08-08 (documentation, retrieved 2026-08-08)
+Rate card: neon-docs-2026-10-30 (documentation, retrieved 2026-10-30)
 
-PROJECT         ID                       COMPUTE  STORAGE  EGRESS  BRANCHES   TOTAL
---------------  -----------------------  -------  -------  ------  --------  ------
-api-production  api-production-11837462   $24.63    $2.15  $12.18     $0.00  $38.96
-analytics       analytics-90315377        $17.60    $3.11   $0.00     $0.00  $20.71
-web-frontend    web-frontend-55118210      $9.05    $0.87   $0.00     $0.00   $9.92
-ml-pipeline     ml-pipeline-68821903       $6.45    $1.33   $0.00     $0.00   $7.78
-staging         staging-27604154           $3.00    $0.43   $0.00     $0.00   $3.43
---------------  -----------------------  -------  -------  ------  --------  ------
-TOTAL                                     $60.73    $7.89  $12.18     $0.00  $80.80
+PROJECT         ID                       COMPUTE  STORAGE  EGRESS  FUNCTIONS  BRANCHES    TOTAL
+--------------  -----------------------  -------  -------  ------  ---------  --------  -------
+api-production  api-production-11837462   $24.63    $2.15  $12.18      $5.11     $0.00   $44.07
+analytics       analytics-90315377        $17.60    $3.11   $0.00      $5.11     $0.00   $25.81
+web-frontend    web-frontend-55118210      $9.05    $0.87   $0.00      $5.10     $0.00   $15.02
+ml-pipeline     ml-pipeline-68821903       $6.45    $1.33   $0.00      $5.35     $0.00   $13.13
+staging         staging-27604154           $3.00    $0.43   $0.00      $5.36     $0.00    $8.80
+--------------  -----------------------  -------  -------  ------  ---------  --------  -------
+TOTAL                                     $60.73    $7.89  $12.18     $26.04     $0.00  $106.84
 ```
 
 ## Run the standalone CLI

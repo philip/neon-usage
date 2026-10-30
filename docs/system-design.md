@@ -32,11 +32,11 @@ This design does **not** assume that the system is part of Neon's official CLI. 
 
 These constraints are architectural inputs, not implementation preferences.
 
-1. The public invoice-aligned history surfaces are `GET /consumption_history/v2/projects` and beta `GET /consumption_history/v2/branches`. Project history has eight metrics; branch history has six and excludes snapshot storage and extra branches. Both require an organization ID. The branch route also requires one or more project IDs ([consumption guide](https://neon.com/docs/guides/consumption-metrics), [project API](https://neon.com/docs/reference/api/consumption/get-consumption-history-per-project-v2), [branch API](https://neon.com/docs/reference/api/consumption/get-consumption-history-per-branch-v2)).
+1. The public invoice-aligned history surfaces are `GET /consumption_history/v2/projects` and beta `GET /consumption_history/v2/branches`. Project history has 12 metrics; branch history has six and excludes snapshot storage, extra branches, and the four Functions metrics. Both require an organization ID. The branch route also requires one or more project IDs ([consumption guide](https://neon.com/docs/guides/consumption-metrics), [project API](https://neon.com/docs/reference/api/consumption/get-consumption-history-per-project-v2), [branch API](https://neon.com/docs/reference/api/consumption/get-consumption-history-per-branch-v2)).
 2. No organization/account consumption-history route or endpoint-level consumption attribution appears in the published Neon OpenAPI. Organization consumption must be labeled as an aggregate inferred from complete project results. Branch compute cannot be reliably split among a primary endpoint and read replicas because history records have no endpoint ID ([published OpenAPI](https://neon.tech/api_spec/release/v2.json), [compute hierarchy](https://neon.com/docs/manage/computes)).
 3. Consumption data updates approximately every 15 minutes; Neon recommends at least 15 minutes between polls. The two history routes share an approximate 50-request-per-minute-per-account token bucket, and querying them does not wake suspended computes ([polling guidance](https://neon.com/docs/guides/consumption-metrics#consumption-polling)).
 4. Hourly, daily, and monthly queries are limited to the last 168 hours, 60 days, and one year respectively. Project history begins no earlier than 2024-03-01 and actual account history starts on upgrade to an eligible plan. Timestamps are rounded to the requested granularity ([date and granularity rules](https://neon.com/docs/guides/consumption-metrics#date-format-range-and-granularity)).
-5. Raw units are CU-seconds, byte-months (the v2 storage metrics), bytes, and branch-hours. Neon uses decimal GB and a fixed 744-hour billing month. These dimensions must not be collapsed into generic "bytes" or silently converted ([usage calculations](https://neon.com/docs/introduction/usage-calculations#converting-raw-values-to-readable-numbers)).
+5. Raw units are CU-seconds, byte-months (the v2 storage metrics), bytes, branch-hours, Functions capacity-microseconds, and Function invocations. Neon uses decimal GB and a fixed 744-hour billing month. These dimensions must not be collapsed into generic "bytes" or silently converted ([usage calculations](https://neon.com/docs/introduction/usage-calculations#converting-raw-values-to-readable-numbers)).
 6. Zero-valued requested metrics may be omitted from a response. A known requested metric omitted from an otherwise valid bucket can be projected as zero, but the source omission must remain distinguishable in lossless storage ([response guidance](https://neon.com/docs/guides/consumption-metrics#example-request-and-response)).
 7. Neon's organization `spending_limit` is currently a Launch/Scale email-notification threshold. Neon checks it approximately every 15 minutes, emails organization admins at 80% and 100%, and continues running projects and accumulating charges. It is not a hard cap ([spending notifications](https://neon.com/docs/introduction/spending-notifications)).
 8. Project `settings.quota` exposes native hard limits for `active_time_seconds`, `compute_time_seconds`, `written_data_bytes`, `data_transfer_bytes`, and `logical_size_bytes`. The first four are current-period cumulative project metrics and are not the same metric family as invoice-aligned v2 history ([quota guide](https://neon.com/docs/guides/consumption-limits), [update project API](https://neon.com/docs/reference/api/projects/update-project)).
@@ -370,7 +370,7 @@ Representative flags include `BETA_SOURCE`, `PAGINATION_INCOMPLETE`, `CURSOR_REP
 
 ### 8.1 Project history adapter
 
-- Requests all eight known metrics by default.
+- Requests all 12 known metrics by default.
 - Supports explicit subsets but records the requested set.
 - Exhaustively paginates when an organization aggregate or complete report is requested.
 - Stops and marks partial on empty pages with a continuation cursor, repeated cursors, repeated entity keys with conflicting bodies, or page caps.
@@ -451,6 +451,8 @@ Deletion must respect tenant requests without erasing shared audit evidence impr
 - Invoice GB-month = byte-months / 1,000,000,000 for the v2 `*_bytes_month` metrics (they arrive already divided by 744); the legacy `data_storage_bytes_hour` field is byte-hours / 744 / 1,000,000,000.
 - Transfer GB = bytes / 1,000,000,000.
 - Raw branch-months = branch-hours / 744; billable branch-months additionally require allowance calculation at project/bucket scope ([official formulas](https://neon.com/docs/introduction/usage-calculations)).
+- Functions capacity-hours = capacity-microseconds / 3,600,000,000.
+- Million Function invocations = invocations / 1,000,000.
 
 Use exact decimal/rational arithmetic internally and round only at presentation. Output includes raw numerator, formula ID, and rounding mode where relevant.
 
@@ -468,7 +470,7 @@ Use exact decimal/rational arithmetic internally and round only at presentation.
 | --- | --- | --- |
 | Source replay | Archived page vs normalized facts | Detect parser/schema regressions |
 | Repeat collection | Earlier vs later revision of same bucket | Detect late/corrected metering |
-| Hierarchy | Project history vs sum of available branch history | Diagnose branch attribution gaps; not an invariant because two metrics are project-only and beta coverage may differ |
+| Hierarchy | Project history vs sum of available branch history | Diagnose branch attribution gaps; not an invariant because six metrics are project-only and beta coverage may differ |
 | Current period | Project snapshot vs compatible v2 totals | Directional validation only; categories and timing can differ |
 | Cost estimate | Derived estimate vs user-entered bill/weekly figure | Explain rate, allowance, timing, granularity, and rounding variance |
 | Control desired state | Stored desired control vs fresh Neon state | Detect drift or out-of-band changes |
@@ -774,7 +776,7 @@ Terminal tables, dashboards, Prometheus exporters, and SDKs consume the stable q
 ### 16.1 Contract and fixture tests
 
 - Validate adapters against sanitized source payloads and the published OpenAPI.
-- Cover all eight project metrics, all six branch metrics, omitted zeros, unknown fields/metrics, multiple periods/plans, deleted/unknown resources, empty pages, and every documented error.
+- Cover all 12 project metrics, all six branch metrics, omitted zeros, unknown fields/metrics, multiple periods/plans, deleted/unknown resources, empty pages, and every documented error.
 - Capture fixtures from eligible Launch and Scale organizations where permitted.
 - Live-validate personal, organization, and project-scoped key behavior.
 - Make beta branch fixtures explicitly versioned.
