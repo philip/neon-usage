@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-10-30
 
 Version 0.4.0 intentionally breaks the 0.3.x library API. CLI workflows remain, but library consumers must migrate to the root SDK or `neon-usage/contracts`. Removed exports and `neon-usage/hosted` have no compatibility aliases.
 
@@ -25,9 +25,12 @@ Version 0.4.0 intentionally breaks the 0.3.x library API. CLI workflows remain, 
 - Limited automatic fallback to plans that confirm history is unsupported. Authentication, authorization, transport, and temporary provider failures remain hard failures.
 - Standardized measured-export exit codes: `0` for complete authoritative history, `2` for partial or non-authoritative output, and `1` for invalid input or hard failure.
 - Stopped explicit current SDK collection from probing the history endpoint.
+- Rejected duplicate entries in comma-separated options such as `--project-ids` and `--metrics`; a repeated value now fails instead of being accepted.
 
 ### Fixed
 
+- Partial coverage now exits 2 as documented. Earlier releases always exited 0, so scripts using `set -e` may now stop on partial data.
+- Explained a keyring-held Neon CLI login instead of reporting that no credential exists, and pointed to the file-backed profile and `NEON_API_KEY` alternatives that work.
 - Kept full-metric demo exports within contract limits and made non-authoritative demo exports return exit 2.
 - Corrected the Agent plan's public network transfer allowance from 500 GB to 100 GB per project.
 
