@@ -878,8 +878,11 @@ describe("CI and inherited process isolation", () => {
     expect(workflow).toContain("persist-credentials: false");
     expect(workflow).toContain('node-version: "24.14.0"');
     expect(workflow).toContain("npm ci --no-audit --no-fund");
-    expect(workflow).toContain('npm run verify:package -- --output "$PACKAGE_OUTPUT"');
-    expect(workflow).toMatch(/PACKAGE_OUTPUT: \$\{\{ runner\.temp \}\}\/neon-usage-package/);
+    expect(workflow).toContain(
+      'npm run verify:package -- --output "$RUNNER_TEMP/neon-usage-package"',
+    );
+    // The runner context is unavailable in job-level env; GitHub rejects such a workflow at parse time.
+    expect(workflow).not.toMatch(/^\s*env:\s*$\n\s*PACKAGE_OUTPUT/m);
     expect(workflow).toMatch(/\$\{\{ runner\.temp \}\}\/neon-usage-package\/\*/);
     expect(workflow).toContain("if-no-files-found: error");
     expect(workflow).not.toMatch(/release:publish|npm publish|secrets\./);
