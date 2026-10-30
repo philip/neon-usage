@@ -17,7 +17,9 @@ Credentials resolve in order: `--api-key`, `--profile`, `NEON_API_KEY`, `NEON_PR
 
 ## Scopes
 
-Every collection also runs under aggregate budgets — defaults: 10 minutes wall-clock, 10,000 entities, 1,000,000 facts, 100 MB of response bytes, alongside the page cap; the global `--max-duration <minutes>`, `--max-items`, `--max-facts`, and `--max-bytes` flags adjust them. A budget that runs out never fails the report: it stops collecting, keeps what was accepted, and labels the result `partial` with the specific flag (`TIME_LIMIT_REACHED`, `ITEM_LIMIT_REACHED`, `FACT_LIMIT_REACHED`, `BYTE_LIMIT_REACHED`, `PAGE_LIMIT_REACHED`) — the same honesty rule as any other gap. Serialized machine output is capped at 25 MB per response.
+Every collection also runs under aggregate budgets — defaults: 10 minutes wall-clock, 10,000 entities, 1,000,000 history facts, 100 MB of response bytes, alongside the page cap; the global `--max-duration <minutes>`, `--max-items`, `--max-facts`, and `--max-bytes` flags adjust them. History retains accepted pages as a partial report with the specific limit flag (`TIME_LIMIT_REACHED`, `ITEM_LIMIT_REACHED`, `FACT_LIMIT_REACHED`, `BYTE_LIMIT_REACHED`, `PAGE_LIMIT_REACHED`). Current report/export share their deadline, combined project/branch item allowance, and response-byte budget across the entire walk. Their deadline or an initial inventory limit fails the operation; a later item/byte limit yields partial project/storage coverage, with a fixed `COLLECTION_LIMIT_REACHED` diagnostic in measured output. Serialized machine output is capped at 25 MB per response.
+
+Branch pricing has a separate 100,000-component output budget matching the measured contract. It counts project/source-period/calendar-month identities, so 10,000 projects across 12 months can exceed it even when collection fits its budgets. The shared pricing path fails with `COLLECTION_LIMIT_REACHED` before generating excess lines; export also checks supplied estimates before constructing component arrays. CLI export exits 1 without JSON, and the SDK rejects with that typed code. Shorten the history window to retry. Results within this budget preserve the collected scope and any available exact pricing totals.
 
 `project-report` and `estimate` accept `--scope`:
 
@@ -47,3 +49,30 @@ The page is fast-first: it boots on cheap routes (context, organizations, projec
 ## Plan capability
 
 `capabilities` reports declared plan capability (a data table) separately from observed endpoint availability. When a plan cannot answer a question — Free organizations and the history API — the CLI and HTTP API refuse with guidance naming what the plan *can* answer rather than silently substituting a different report kind.
+
+## Export measured usage
+
+`export --format measured-usage-json` is the stable, versioned contract for downstream cost tools (for example a cross-vendor estimator that must never see a credential). It is a projection of the same honest reports above, not a new collection:
+
+- **One kind, one vocabulary.** The output is `kind: "measured_billing_usage"` with a `schemaVersion` that bumps only on a breaking change. Consumers must reject an unrecognized version rather than best-effort parse it. Snapshot counters are mapped onto the raw v2 metric names their values are compatible with, so a consumer reads one metric vocabulary regardless of source.
+- **Measured, never predicted.** The export answers "what did this consume or cost". It always leaves the comparison sizing inputs (`peakCu`, `avgCu`, `activeHours`) unresolved, because billed CU-hours do not determine a peak or an active-hours denominator. A consumer that wants to rank vendors must supply those separately; the export refuses to fabricate them.
+- **Authority is explicit.** `source.authoritative` identifies the billing-history source; `coverage.authoritative` is true only for complete consumption-history v2 coverage. The current-period snapshot is always non-authoritative, its aggregate `metrics` are withheld (null), and its legacy `dataStorageByteHours` is omitted in favor of a separately labeled `pointInTimeStorage` (a live logical-size read, not billed byte-months).
+- **Lossless and provenance-preserving.** Every metric carries its raw decimal-string counter and an exact-rational derived value. Projected zeros (a source-omitted row filled with zero) stay distinguishable from reported values via `presence`. Pre-netted billable branch-months are copied verbatim from the pricing estimate so the consumer never re-derives Neon's bucket-aware allowance netting.
+- **Scripting.** Exit `0` for authoritative complete output, `2` for partial or non-authoritative output, and `1` for invalid input or a hard failure. `--source auto` uses history only after observing it as available and falls back only on confirmed `unsupported_by_plan`. Forbidden, transient, authentication, and transport failures do not trigger fallback.
+
+Source-specific options select the source and cannot be mixed:
+
+| Explicit options | `--source auto` or omitted | `--source history` | `--source current` |
+| --- | --- | --- | --- |
+| No history or project options | Capability-based selection | History required | Current snapshot |
+| Any history option | History required | History required | Usage error |
+| `--project-ids` only | Current snapshot | Usage error | Current snapshot |
+| History option plus `--project-ids` | Usage error | Usage error | Usage error |
+
+History options are `--from`, `--to`, `--last`, `--month`, `--granularity`, `--metrics`, `--run-id`, `--resume`, `--fresh`, and `--store-tail`. Explicit defaults still select history. Empty or duplicate comma-separated values fail, and `all` must be the only project-ID token.
+
+CLI JSON delivery is capped at 25,000,000 serialized bytes. Larger documents fail with `SERIALIZED_OUTPUT_TOO_LARGE`; the in-process SDK has separate collection limits.
+
+Validate exported JSON with `parseMeasuredBillingUsage` from `neon-usage/contracts`. Version 0.4.0 emits measured schema 2 and intentionally rejects older schemas; recollect legacy exports instead of inventing omission names, project periods, or complete coverage. History requires billing granularity even when partial; snapshots require explicit `pointInTimeStorage` coverage, including null sizes when unavailable, and need no billing granularity. Metrics unsupported by the source endpoint remain evidence but appear in `coverage.omittedMetrics` with `UNKNOWN_METRIC` when excluded from normalized totals, including globally known snapshot-only metrics returned by history. `metricSelection` states the requested dimensions, and branch allowance components retain separate completeness and approximation status. The parser validates these accounting relationships with bounded exact quantities.
+
+The Node.js 24 SDK uses `createNeonUsageClient` from the root; browser code uses only the pure contracts entry. The [SDK guide](sdk.md) and [migration inventory](public-package-migration.md) describe supported imports and legacy recollection.

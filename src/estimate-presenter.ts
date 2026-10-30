@@ -133,9 +133,16 @@ export function renderPriceTable(
     perMetric.set(line.metric, addFraction(perMetric.get(line.metric) ?? zeroFraction, amount));
     byProject.set(line.projectId, perMetric);
   }
+  const groupedMetrics = new Set(priceColumns.flatMap((column) => column.metrics));
+  const otherMetrics = [
+    ...new Set(estimate.lines.filter((line) => line.amount).map((line) => line.metric)),
+  ].filter((metric) => !groupedMetrics.has(metric));
+  const columns = otherMetrics.length
+    ? [...priceColumns, { header: "OTHER", metrics: otherMetrics }]
+    : priceColumns;
   const rows = [...byProject.entries()]
     .map(([projectId, perMetric]) => {
-      const cells = priceColumns.map((column) =>
+      const cells = columns.map((column) =>
         column.metrics.reduce(
           (sum, metric) => addFraction(sum, perMetric.get(metric) ?? zeroFraction),
           zeroFraction,
@@ -149,11 +156,11 @@ export function renderPriceTable(
     })
     .filter((row) => row.total.numerator > 0n)
     .sort((left, right) => compareFraction(right.total, left.total));
-  const headers = ["PROJECT", "ID", ...priceColumns.map((column) => column.header), "TOTAL"];
+  const headers = ["PROJECT", "ID", ...columns.map((column) => column.header), "TOTAL"];
   const totalRow = [
     "TOTAL",
     "",
-    ...priceColumns.map((_column, index) =>
+    ...columns.map((_column, index) =>
       usdFromFraction(
         rows.reduce((sum, row) => addFraction(sum, row.cells[index] ?? zeroFraction), zeroFraction),
       ),

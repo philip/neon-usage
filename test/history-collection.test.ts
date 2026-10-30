@@ -1,10 +1,137 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { collectHistoryPages } from "../src/history-collection.js";
 import { createInMemoryEvidenceFactStore } from "../src/in-memory-fact-store.js";
+import { NeonResponseTooLargeError } from "../src/neon-api-source.js";
 
 type Page = { items: readonly string[]; nextCursor: string | null };
 
 describe("collectHistoryPages", () => {
+  it("retains accepted pages with a fixed byte-limit flag for an oversized later response", async () => {
+    const result = await collectHistoryPages<Page>({
+      maxPages: 10,
+      getItems: (page) => page.items,
+      getNextCursor: (page) => page.nextCursor,
+      getPage: async (cursor) => {
+        if (cursor !== null)
+          throw new NeonResponseTooLargeError("secret provider response", {
+            status: 200,
+            requestId: "secret-request",
+            attempts: 1,
+          });
+        return { items: ["accepted"], nextCursor: "next" };
+      },
+    });
+    expect(result.pages).toEqual([{ items: ["accepted"], nextCursor: "next" }]);
+    expect(result.qualityFlags).toEqual(["BYTE_LIMIT_REACHED"]);
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it.each([
+    "beginCollectionRun",
+    "appendCollectionPage",
+    "recordCollectionRun",
+    "onPage",
+    "onRunFinished",
+  ] as const)("bounds a non-cooperative %s with the collection deadline", async (phase) => {
+    const store = createInMemoryEvidenceFactStore();
+    const deadline = new AbortController();
+    let entered: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const stallWrite = async (_input: unknown, signal?: AbortSignal) => {
+      receivedSignal = signal;
+      entered();
+      return new Promise<never>(() => {});
+    };
+    const stallCallback = async () => {
+      entered();
+      return new Promise<never>(() => {});
+    };
+    if (phase === "beginCollectionRun") store.beginCollectionRun = stallWrite;
+    if (phase === "appendCollectionPage") store.appendCollectionPage = stallWrite;
+    if (phase === "recordCollectionRun") store.recordCollectionRun = stallWrite;
+    const result = collectHistoryPages<Page>({
+      maxPages: 10,
+      context: { deadlineSignal: deadline.signal },
+      store,
+      intent: { sourceAccount: "test", sourceContract: "test", request: {} },
+      pageWrite: () => ({ facts: [], evidence: [] }),
+      getItems: (page) => page.items,
+      getNextCursor: (page) => page.nextCursor,
+      getPage: async () => ({ items: [], nextCursor: null }),
+      ...(phase === "onPage" ? { onPage: stallCallback } : {}),
+      ...(phase === "onRunFinished" ? { onRunFinished: stallCallback } : {}),
+    }).catch((error: unknown) => error);
+    await started;
+    deadline.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const settled = await Promise.race([
+        result,
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve({ kind: "stalled" }), 100);
+        }),
+      ]);
+      expect(settled).toMatchObject({ kind: "time_limit" });
+      if (phase.endsWith("Run") || phase === "appendCollectionPage") {
+        expect(receivedSignal?.aborted).toBe(true);
+      }
+    } finally {
+      clearTimeout(timer);
+      store.close();
+    }
+  });
+
+  it.each([
+    "beginCollectionRun",
+    "appendCollectionPage",
+    "recordCollectionRun",
+    "getPage",
+    "onPage",
+  ] as const)("cancels a non-cooperative %s promptly", async (phase) => {
+    const controller = new AbortController();
+    let entered: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const stall = async () => {
+      entered();
+      return new Promise<never>(() => {});
+    };
+    const store = createInMemoryEvidenceFactStore();
+    if (phase === "beginCollectionRun") store.beginCollectionRun = stall;
+    if (phase === "appendCollectionPage") store.appendCollectionPage = stall;
+    if (phase === "recordCollectionRun") store.recordCollectionRun = stall;
+    const result = collectHistoryPages<Page>({
+      maxPages: 10,
+      context: { signal: controller.signal },
+      store,
+      intent: { sourceAccount: "test", sourceContract: "test", request: {} },
+      pageWrite: () => ({ facts: [], evidence: [] }),
+      getItems: (page) => page.items,
+      getNextCursor: (page) => page.nextCursor,
+      getPage: phase === "getPage" ? stall : async () => ({ items: [], nextCursor: null }),
+      ...(phase === "onPage" ? { onPage: stall } : {}),
+    }).catch((error: unknown) => error);
+    await started;
+    controller.abort("stop");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const settled = await Promise.race([
+        result,
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve({ kind: "stalled" }), 100);
+        }),
+      ]);
+      expect(settled).toMatchObject({ name: "OperationCancelledError", kind: "cancelled" });
+    } finally {
+      clearTimeout(timer);
+      store.close();
+    }
+  });
+
   it("commits each accepted page before requesting its continuation", async () => {
     const events: string[] = [];
     const result = await collectHistoryPages<Page, string>({
@@ -214,6 +341,81 @@ describe("collectHistoryPages", () => {
     expect(result).toMatchObject({ status: "partial", qualityFlags: ["PAGE_LIMIT_REACHED"] });
   });
 
+  it.each(["store", "callback", "store_and_callback"] as const)(
+    "preserves deadline partials and skips unstarted %s finalization",
+    async (configured) => {
+      const store = createInMemoryEvidenceFactStore();
+      const recordCollectionRun = store.recordCollectionRun;
+      const intent = { sourceAccount: "test", sourceContract: "test", request: {} };
+      let storeFinalizations = 0;
+      let callbackFinalizations = 0;
+      store.recordCollectionRun = async () => {
+        storeFinalizations += 1;
+        return new Promise(() => {});
+      };
+      const callbacks = {
+        onRunFinished: async () => {
+          callbackFinalizations += 1;
+          return new Promise<void>(() => {});
+        },
+      };
+      const persistence = {
+        store,
+        intent,
+        pageWrite: () => ({ facts: [], evidence: [] }),
+      };
+      try {
+        const result = await collectHistoryPages<Page, string>({
+          maxPages: 10,
+          maxDurationMs: 20,
+          createRunId: () => "run_deadline-partial",
+          ...(configured === "callback" ? {} : persistence),
+          ...(configured === "store" ? {} : callbacks),
+          getItems: (page) => page.items,
+          getNextCursor: (page) => page.nextCursor,
+          getPage: async (cursor) =>
+            cursor === null ? { items: ["one"], nextCursor: "next" } : new Promise(() => {}),
+        });
+
+        expect(result).toMatchObject({
+          status: "partial",
+          qualityFlags: ["TIME_LIMIT_REACHED"],
+          items: ["one"],
+        });
+        expect(storeFinalizations).toBe(0);
+        expect(callbackFinalizations).toBe(0);
+        if (configured !== "callback") {
+          expect(await store.getCollectionRun(result.runId)).toMatchObject({
+            status: "running",
+            pageCount: 1,
+          });
+          expect(await store.getRunPage(result.runId, 1)).toMatchObject({
+            nextCursor: "next",
+            terminalState: "continue",
+          });
+
+          store.recordCollectionRun = recordCollectionRun;
+          const resumed = await collectHistoryPages<Page, string>({
+            ...persistence,
+            maxPages: 10,
+            maxDurationMs: 100,
+            resumeRunId: result.runId,
+            getItems: (page) => page.items,
+            getNextCursor: (page) => page.nextCursor,
+            getPage: async (cursor) => {
+              expect(cursor).toBe("next");
+              return { items: ["two"], nextCursor: null };
+            },
+          });
+          expect(resumed).toMatchObject({ status: "complete", items: ["one", "two"] });
+          expect(await store.getCollectionRun(result.runId)).toMatchObject({ status: "complete" });
+        }
+      } finally {
+        store.close();
+      }
+    },
+  );
+
   it("marks an in-flight collection partial when its duration budget expires", async () => {
     const result = await collectHistoryPages<Page>({
       maxPages: 10,
@@ -228,6 +430,41 @@ describe("collectHistoryPages", () => {
         }),
     });
     expect(result).toMatchObject({ status: "partial", qualityFlags: ["TIME_LIMIT_REACHED"] });
+  });
+
+  it("skips finalization when monotonic time expires before the deadline signal fires", async () => {
+    let elapsed = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
+    const store = createInMemoryEvidenceFactStore();
+    const finalization = vi.spyOn(store, "recordCollectionRun");
+    const callback = vi.fn(async () => {});
+    try {
+      const result = await collectHistoryPages<Page>({
+        maxPages: 10,
+        maxDurationMs: 20,
+        store,
+        intent: { sourceAccount: "test", sourceContract: "test", request: {} },
+        pageWrite: () => ({ facts: [], evidence: [] }),
+        getItems: (page) => page.items,
+        getNextCursor: (page) => {
+          elapsed = 21;
+          return page.nextCursor;
+        },
+        getPage: async () => ({ items: ["one"], nextCursor: "next" }),
+        onRunFinished: callback,
+      });
+      expect(result).toMatchObject({ status: "partial", qualityFlags: ["TIME_LIMIT_REACHED"] });
+      expect(finalization).not.toHaveBeenCalled();
+      expect(callback).not.toHaveBeenCalled();
+      expect(await store.getCollectionRun(result.runId)).toMatchObject({
+        status: "running",
+        pageCount: 1,
+      });
+      expect(await store.getRunPage(result.runId, 1)).toMatchObject({ nextCursor: "next" });
+    } finally {
+      clock.mockRestore();
+      store.close();
+    }
   });
 
   it("retains accepted pages after a later ordinary source failure", async () => {

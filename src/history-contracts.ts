@@ -1,4 +1,13 @@
-import { branchConsumptionMetrics, projectConsumptionMetrics } from "./metric-catalog.js";
+import {
+  branchConsumptionMetrics,
+  type HistoryBranchMetricName,
+  type HistoryProjectMetricName,
+  type KnownMetricName,
+  metricDefinitions,
+  projectConsumptionMetrics,
+} from "./metric-definitions.js";
+
+const knownMetrics = Object.keys(metricDefinitions) as KnownMetricName[];
 
 const projectHistoryContract = Object.freeze({
   sourceContract: "consumption-history-v2-projects" as const,
@@ -6,6 +15,11 @@ const projectHistoryContract = Object.freeze({
   pageSize: 100,
   beta: false as const,
   metrics: projectConsumptionMetrics,
+  supportedMetrics: Object.freeze(
+    knownMetrics.filter((name): name is HistoryProjectMetricName =>
+      metricDefinitions[name].endpoints.some((endpoint) => endpoint === "history_project"),
+    ),
+  ),
 });
 
 const branchHistoryContract = Object.freeze({
@@ -19,6 +33,11 @@ const branchHistoryContract = Object.freeze({
     "BRANCH_HISTORY_COVERAGE_UNVERIFIED" as const,
   ]),
   metrics: branchConsumptionMetrics,
+  supportedMetrics: Object.freeze(
+    knownMetrics.filter((name): name is HistoryBranchMetricName =>
+      metricDefinitions[name].endpoints.some((endpoint) => endpoint === "history_branch"),
+    ),
+  ),
 });
 
 export const historyContracts = Object.freeze({

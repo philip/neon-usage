@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { createConsumptionService } from "../src/index.js";
+import { createConsumptionService } from "../src/history-report.js";
 import { serializeMachineJson } from "../src/machine-json.js";
 import { createNeonApiSource } from "../src/neon-api-source.js";
 

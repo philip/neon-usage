@@ -10,8 +10,14 @@ import type {
   CollectionPageWrite,
   EvidenceFactStore,
 } from "./evidence-fact-store.js";
+import { NeonResponseTooLargeError } from "./neon-api-source.js";
 import type { OperationContext } from "./operation-context.js";
-import { isCancellationFailure, throwIfAborted } from "./operation-context.js";
+import {
+  isCancellationFailure,
+  OperationLimitError,
+  raceAbort,
+  throwIfAborted,
+} from "./operation-context.js";
 
 export type HistoryCollectionQualityFlag =
   | "CURSOR_REPEATED"
@@ -143,7 +149,13 @@ export async function collectHistoryPages<Page, Item = unknown>(
   const remainingDuration = budget.maxDurationMs
     ? Math.max(1, Math.ceil(budget.maxDurationMs - (performance.now() - budget.startedAt)))
     : undefined;
-  const deadline = remainingDuration ? AbortSignal.timeout(remainingDuration) : undefined;
+  const deadline =
+    options.context?.deadlineSignal ??
+    (remainingDuration ? AbortSignal.timeout(remainingDuration) : undefined);
+  const timeExpired = () =>
+    deadline?.aborted ||
+    (budget.maxDurationMs !== undefined &&
+      performance.now() - budget.startedAt >= budget.maxDurationMs);
   const signal =
     deadline && options.context?.signal
       ? AbortSignal.any([options.context.signal, deadline])
@@ -165,7 +177,8 @@ export async function collectHistoryPages<Page, Item = unknown>(
 
   try {
     if (options.store && options.intent) {
-      const prior = await options.store.getCollectionRun(runId);
+      throwIfAborted(options.context);
+      const prior = await raceAbort(options.store.getCollectionRun(runId), signal);
       if (options.resumeRunId && !prior) {
         throw new Error(`Collection run ${runId} was not found`);
       }
@@ -179,12 +192,15 @@ export async function collectHistoryPages<Page, Item = unknown>(
       if (prior && !isDeepStrictEqual(prior.intent, options.intent)) {
         throw new ConsumptionSourceIntegrityError(`Collection run ${runId} intent does not match`);
       }
-      await options.store.beginCollectionRun({ runId, intent: options.intent });
+      await raceAbort(
+        options.store.beginCollectionRun({ runId, intent: options.intent }, signal),
+        signal,
+      );
       lifecycleStarted = true;
-      const run = await options.store.getCollectionRun(runId);
+      const run = await raceAbort(options.store.getCollectionRun(runId), signal);
       if (!run) throw new Error(`Collection run ${runId} could not be loaded`);
       for (let pageNumber = 1; pageNumber <= run.pageCount; pageNumber += 1) {
-        const committed = await options.store.getRunPage(runId, pageNumber);
+        const committed = await raceAbort(options.store.getRunPage(runId, pageNumber), signal);
         if (!committed) throw new Error(`Collection run ${runId} is missing page ${pageNumber}`);
         const page = committed.page as Page;
         options.validatePage?.(page);
@@ -228,18 +244,24 @@ export async function collectHistoryPages<Page, Item = unknown>(
       if (restoredBudgetLimit) {
         const status = "partial" as const;
         if (run.status === "running") {
-          await finishRun(options, {
-            runId,
-            status,
-            completedAt: (options.now?.() ?? new Date()).toISOString(),
-            pageCount: run.pageCount,
-            qualityFlags,
-          });
+          await finishRun(
+            options,
+            {
+              runId,
+              status,
+              completedAt: (options.now?.() ?? new Date()).toISOString(),
+              pageCount: run.pageCount,
+              qualityFlags,
+            },
+            signal,
+          );
         }
         return { runId, pages, items, status, qualityFlags, errors, errorDetails };
       }
       const last =
-        run.pageCount > 0 ? await options.store.getRunPage(runId, run.pageCount) : undefined;
+        run.pageCount > 0
+          ? await raceAbort(options.store.getRunPage(runId, run.pageCount), signal)
+          : undefined;
       if (run.status === "failed") {
         throw new Error(`Collection run ${runId} is terminal and failed`);
       }
@@ -282,19 +304,27 @@ export async function collectHistoryPages<Page, Item = unknown>(
               ? "complete"
               : "partial";
         if (run.status === "running") {
-          await finishRun(options, {
-            runId,
-            status,
-            completedAt: (options.now?.() ?? new Date()).toISOString(),
-            pageCount: pages.length,
-            qualityFlags,
-          });
+          await finishRun(
+            options,
+            {
+              runId,
+              status,
+              completedAt: (options.now?.() ?? new Date()).toISOString(),
+              pageCount: pages.length,
+              qualityFlags,
+            },
+            signal,
+          );
         }
         return { runId, pages, items, status, qualityFlags, errors, errorDetails };
       }
     }
     do {
       throwIfAborted(options.context);
+      if (timeExpired()) {
+        qualityFlags.push("TIME_LIMIT_REACHED");
+        break;
+      }
       let page: Page;
       try {
         if (budget.maxPages !== undefined && budget.pages >= budget.maxPages) {
@@ -305,24 +335,25 @@ export async function collectHistoryPages<Page, Item = unknown>(
           qualityFlags.push("BYTE_LIMIT_REACHED");
           break;
         }
-        page = await options.getPage(cursor, requestContext());
+        page = await raceAbort(options.getPage(cursor, requestContext()), signal);
         options.validatePage?.(page);
-        if (deadline?.aborted) {
+        if (timeExpired()) {
           qualityFlags.push("TIME_LIMIT_REACHED");
           break;
         }
       } catch (error) {
         throwIfAborted(options.context);
         if (
-          typeof error === "object" &&
-          error !== null &&
-          "kind" in error &&
-          error.kind === "byte_limit"
+          error instanceof NeonResponseTooLargeError ||
+          (typeof error === "object" &&
+            error !== null &&
+            "kind" in error &&
+            error.kind === "byte_limit")
         ) {
           qualityFlags.push("BYTE_LIMIT_REACHED");
           break;
         }
-        if (deadline?.aborted) {
+        if (timeExpired()) {
           qualityFlags.push("TIME_LIMIT_REACHED");
           break;
         }
@@ -364,12 +395,7 @@ export async function collectHistoryPages<Page, Item = unknown>(
         continuationIssue = "CURSOR_REPEATED";
       } else if (budget.pages >= options.maxPages && nextCursor !== null) {
         continuationIssue = "PAGE_LIMIT_REACHED";
-      } else if (
-        (deadline?.aborted ||
-          (budget.maxDurationMs !== undefined &&
-            performance.now() - budget.startedAt >= budget.maxDurationMs)) &&
-        nextCursor !== null
-      ) {
+      } else if (timeExpired() && nextCursor !== null) {
         continuationIssue = "TIME_LIMIT_REACHED";
       } else if (
         budget.maxItems !== undefined &&
@@ -422,15 +448,19 @@ export async function collectHistoryPages<Page, Item = unknown>(
         terminalState,
       };
       if (options.store && options.pageWrite) {
-        await options.store.appendCollectionPage({
-          ...checkpoint,
-          page,
-          ...options.pageWrite(page, checkpoint),
-        });
+        await raceAbort(
+          options.store.appendCollectionPage(
+            { ...checkpoint, page, ...options.pageWrite(page, checkpoint) },
+            signal,
+          ),
+          signal,
+        );
       }
-      await options.onPage?.(page, checkpoint, requestContext());
+      if (options.onPage) {
+        await raceAbort(options.onPage(page, checkpoint, requestContext()), signal);
+      }
       throwIfAborted(options.context);
-      if (deadline?.aborted) {
+      if (timeExpired()) {
         qualityFlags.push("TIME_LIMIT_REACHED");
         break;
       }
@@ -449,28 +479,42 @@ export async function collectHistoryPages<Page, Item = unknown>(
     const status = qualityFlags.length === 0 ? "complete" : "partial";
     const result = { runId, pages, items, status, qualityFlags, errors, errorDetails } as const;
     collectionFinished = true;
-    await finishRun(options, {
-      runId,
-      status,
-      completedAt: (options.now?.() ?? new Date()).toISOString(),
-      pageCount: pages.length,
-      qualityFlags,
-    });
+    // Return the safe deadline partial and leave checkpoints resumable without starting expired work.
+    if (timeExpired() && qualityFlags.includes("TIME_LIMIT_REACHED")) return result;
+    await finishRun(
+      options,
+      {
+        runId,
+        status,
+        completedAt: (options.now?.() ?? new Date()).toISOString(),
+        pageCount: pages.length,
+        qualityFlags,
+      },
+      signal,
+    );
     return result;
-  } catch (error) {
+  } catch (cause) {
+    const error =
+      timeExpired() && !options.context?.signal?.aborted
+        ? new OperationLimitError("time_limit")
+        : cause;
     if (
       lifecycleStarted &&
       !collectionFinished &&
       !(isCancellationFailure(error) && pages.length > 0)
     ) {
       try {
-        await finishRun(options, {
-          runId,
-          status: "failed",
-          completedAt: (options.now?.() ?? new Date()).toISOString(),
-          pageCount: pages.length,
-          qualityFlags,
-        });
+        await finishRun(
+          options,
+          {
+            runId,
+            status: "failed",
+            completedAt: (options.now?.() ?? new Date()).toISOString(),
+            pageCount: pages.length,
+            qualityFlags,
+          },
+          signal,
+        );
       } catch (finalizeError) {
         // The collection failure is the primary diagnosis; the failed
         // finalization rides along instead of replacing it.
@@ -508,12 +552,18 @@ function restoreItems<Page, Item>(
 async function finishRun<Page, Item>(
   options: CollectHistoryPagesOptions<Page, Item>,
   summary: CollectionRunSummary,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (options.store && options.intent) {
-    await options.store.recordCollectionRun({
-      ...summary,
-      sourceContract: options.intent.sourceContract,
-    });
+    await raceAbort(
+      options.store.recordCollectionRun(
+        { ...summary, sourceContract: options.intent.sourceContract },
+        signal,
+      ),
+      signal,
+    );
   }
-  await options.onRunFinished?.(summary);
+  if (options.onRunFinished) {
+    await raceAbort(options.onRunFinished(summary), signal);
+  }
 }

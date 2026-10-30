@@ -1,9 +1,50 @@
-import { describe, expect, it } from "vitest";
-import { formatCliError } from "../src/cli-error-format.js";
+import { describe, expect, it, vi } from "vitest";
+import { formatCliError, serializedOutputErrorParts } from "../src/cli-error-format.js";
+import { toSourceErrorDetail } from "../src/errors.js";
+import { SerializedOutputTooLargeError } from "../src/machine-json.js";
+import { createNeonApiSource } from "../src/neon-api-source.js";
 
 const plain = { color: false, width: 80 };
 
 describe("formatCliError", () => {
+  it.each(["credential-short", `credential-${"x".repeat(700)}`])(
+    "keeps credential echoes out of CLI stderr and partial diagnostics (%s)",
+    async (apiKey) => {
+      const source = createNeonApiSource({
+        apiKey,
+        maxRetries: 0,
+        fetch: async () =>
+          Response.json(
+            { code: `prefix-${apiKey}-suffix`, message: `prefix-${apiKey}-suffix` },
+            { status: 403 },
+          ),
+      });
+      const error = await source.getOrganization("org-1").catch((reason: unknown) => reason);
+      if (!(error instanceof Error)) throw new Error("Expected provider error");
+      expect(JSON.stringify(toSourceErrorDetail(error))).not.toContain("credential-");
+      const previousExitCode = process.exitCode;
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      vi.resetModules();
+      vi.doMock("../src/cli.js", () => ({
+        runCli: async () => {
+          throw error;
+        },
+      }));
+      try {
+        await import("../src/bin.js");
+        await vi.waitFor(() => expect(stderr).toHaveBeenCalled());
+        const rendered = stderr.mock.calls.map(([value]) => String(value)).join("");
+        expect(rendered).toContain("unrecognized error response");
+        expect(rendered).not.toContain("credential-");
+        expect(process.exitCode).toBe(1);
+      } finally {
+        process.exitCode = previousExitCode;
+        stderr.mockRestore();
+        vi.doUnmock("../src/cli.js");
+        vi.resetModules();
+      }
+    },
+  );
   it("labels the headline and blocks the detail and fix", () => {
     const output = formatCliError(
       {
@@ -70,5 +111,38 @@ describe("formatCliError", () => {
     const colored = formatCliError({ headline: "H" }, { color: true, width: 80 });
     expect(colored).toContain("[1;31mError[0m");
     expect(formatCliError({ headline: "H" }, plain)).not.toContain("");
+  });
+});
+
+describe("serialized-output failure", () => {
+  it("renders the stable code, measured byte count, ceiling and recovery", () => {
+    const error = new SerializedOutputTooLargeError(25_000_001, 25_000_000);
+    const rendered = formatCliError(serializedOutputErrorParts(error), plain);
+    expect(rendered).toContain("SERIALIZED_OUTPUT_TOO_LARGE");
+    expect(rendered).toContain("25000001 bytes");
+    expect(rendered).toContain("25000000-byte limit");
+    expect(rendered).toContain("use the SDK");
+  });
+
+  it("prints the documented code and exits 1 at the executable boundary", async () => {
+    const previousExitCode = process.exitCode;
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.doMock("../src/cli.js", () => ({
+      runCli: async () => {
+        const { SerializedOutputTooLargeError } = await import("../src/machine-json.js");
+        throw new SerializedOutputTooLargeError(25_000_001, 25_000_000);
+      },
+    }));
+    try {
+      await import("../src/bin.js");
+      await vi.waitFor(() => expect(process.exitCode).toBe(1));
+      expect(stderr.mock.calls.map(([value]) => String(value)).join("")).toContain(
+        "SERIALIZED_OUTPUT_TOO_LARGE",
+      );
+    } finally {
+      process.exitCode = previousExitCode;
+      stderr.mockRestore();
+      vi.doUnmock("../src/cli.js");
+    }
   });
 });

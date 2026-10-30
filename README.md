@@ -27,7 +27,9 @@ staging         staging-27604154           $3.00    $0.43   $0.00     $0.00   $3
 TOTAL                                     $60.73    $7.89  $12.18     $0.00  $80.80
 ```
 
-## Quick start
+## Run the standalone CLI
+
+Use Node.js 24 or later for the CLI and SDK. Node.js 22 users must upgrade Node or stay on `neon-usage@0.3.0`, whose minimum is Node.js 22.12.
 
 ```sh
 npx neon-usage@latest dashboard --demo  # try it right now: synthetic data, no Neon account needed
@@ -65,6 +67,7 @@ neon-usage dashboard --profile neon-usage       # or: export NEON_PROFILE=neon-u
 | `project-report` | Invoice-aligned per-project history buckets |
 | `estimate` | Labeled cost estimate over complete history |
 | `organization-summary` | Whole-org totals aggregated from complete project history |
+| `export` | Stable, lossless measured-usage JSON contract for downstream cost tools |
 | `current-report` | Current billing period's live counters (works on Free) |
 | `controls` | Spending notification + project quotas (`--utilization`) |
 | `organizations` / `projects` | What the credential can see |
@@ -75,12 +78,77 @@ neon-usage dashboard --profile neon-usage       # or: export NEON_PROFILE=neon-u
 
 How the commands behave (details in `--help` and [docs/how-it-works.md](https://github.com/philip/neon-usage/blob/main/docs/how-it-works.md)):
 
-- **Output** — `usage`, `project-report`, `estimate`, `current-report`, `controls`, and `doctor` take `--output table|json`; the rest emit JSON only. JSON is the lossless machine contract (default when piped). Partial coverage is labeled in the report and signaled with exit code 2.
-- **Windows** — `--last 7d`, `--month 2026-07|current|previous`, or `--from`/`--to`, with `--granularity hourly|daily|monthly`. Default: the current month to date, daily.
-- **Project scope** — per-project commands default to the project linked in the nearest `.neon`. Widen with `--project-ids <ids>` (`all` on `current-report` and `controls`), or with `--scope organization|live-projects` on `project-report` and `estimate` — invoice-aligned versus fast; live scope excludes projects deleted in-window and says so.
-- **Budgets** — collections walk the API at 180 requests/minute (`--request-budget`) under aggregate ceilings (`--max-duration`, `--max-items`, `--max-facts`, `--max-bytes`); a hit ceiling stops honestly as `partial` with the specific limit flag.
-- **Local store** — collections persist to per-user SQLite and repeat queries serve from it in about a second (`--fresh` recollects; `--store-tail <n>` re-observes the tail; `branch-report` always re-collects). `better-sqlite3` is an optional native dependency: if it can't build, the tool warns once and runs in-memory for the session.
-- **Credentials** — `--api-key`, `--profile`, `NEON_API_KEY`, `NEON_PROFILE`, then the Neon CLI's stored login; `.env.local` may supply key, profile, and context values. `neon-usage doctor` shows what resolved and when it expires, offline.
+- **Output:** Human-facing commands support tables and JSON. Partial coverage is labeled and exits 2.
+- **History:** Defaults to complete billing periods and persists locally so repeated queries can reuse collected data.
+- **Scope:** History can cover the organization or only live projects. Current reports can select specific projects.
+- **Credentials:** Uses an explicit API key or profile, environment variables, then the Neon CLI login.
+
+## Export measured usage
+
+```sh
+neon-usage export --source history --last 7d --format measured-usage-json > usage.json
+neon-usage export --source current --project-ids all --format measured-usage-json > current.json
+```
+
+The measured-usage export is a versioned, lossless contract for downstream cost tools. History can be authoritative when coverage is complete; current snapshots are always non-authoritative. The export never invents forecasting inputs such as peak CU.
+
+See [how measured export works](https://github.com/philip/neon-usage/blob/main/docs/how-it-works.md#export-measured-usage) for source selection, exit codes, limits, and coverage rules.
+
+## Collect usage from a Node.js server
+
+Install `neon-usage` and import the SDK from its root. Keep the access token in your server process; the SDK does not discover CLI credentials or manage token refresh.
+
+<!-- README example: history -->
+
+```ts
+import { createNeonUsageClient, NeonUsageError } from "neon-usage";
+
+export async function collectHistory(accessToken: string, organizationId: string) {
+  const client = createNeonUsageClient({ accessToken });
+  try {
+    return await client.collectMeasuredUsage({
+      organizationId,
+      source: "history",
+      query: {
+        from: "2026-10-23T00:00:00.000Z",
+        to: "2026-10-24T00:00:00.000Z",
+        granularity: "daily",
+        metrics: ["compute_unit_seconds"],
+      },
+    });
+  } catch (error) {
+    if (error instanceof NeonUsageError && error.code === "AUTHENTICATION_FAILED") {
+      console.error("Refresh the server-held Neon credential before retrying.");
+    }
+    throw error;
+  } finally {
+    client.close();
+  }
+}
+```
+
+The result contains capability information, measured usage, and a labeled estimate when history pricing is available. See the [SDK guide](https://github.com/philip/neon-usage/blob/main/docs/sdk.md) for current snapshots, errors, cancellation, limits, and shared request coordination.
+
+## Validate CLI JSON without the SDK
+
+Use the browser-safe `neon-usage/contracts` entry to validate untrusted CLI JSON without importing the server SDK.
+
+<!-- README example: contracts -->
+
+```ts
+import { parseMeasuredBillingUsage } from "neon-usage/contracts";
+
+export function parseCliExport(jsonText: string) {
+  const input: unknown = JSON.parse(jsonText);
+  return parseMeasuredBillingUsage(input);
+}
+```
+
+The parser preserves exact numeric strings and rejects malformed, inconsistent, or unsupported documents. Check coverage and metric selection before using a complete export for forecasting.
+
+## Migrate library imports and saved exports
+
+Version 0.4.0 intentionally breaks the 0.3.x library API and measured schema 1. See the [migration guide](https://github.com/philip/neon-usage/blob/main/docs/public-package-migration.md) for replacement imports and recollection guidance.
 
 ## Dashboard
 
@@ -92,11 +160,13 @@ Collection scope is a visible toggle, honestly labeled: **All projects** (invoic
 
 ## Documentation
 
-Full docs live in the repository (the npm package ships only this README, SECURITY.md, and the license files):
+Full docs live in the repository (the npm package ships this README, CHANGELOG.md, SECURITY.md, and the license files):
 
 - [docs/how-it-works.md](https://github.com/philip/neon-usage/blob/main/docs/how-it-works.md) — honesty rules, scopes, the local store, the dashboard's design
+- [docs/sdk.md](https://github.com/philip/neon-usage/blob/main/docs/sdk.md) — SDK sources, errors, cancellation, coordination, and limits
 - [SECURITY.md](https://github.com/philip/neon-usage/blob/main/SECURITY.md) — threat model and limits
 - [DEVELOPMENT.md](https://github.com/philip/neon-usage/blob/main/DEVELOPMENT.md) — module map and contributing
+- [docs/public-package-migration.md](https://github.com/philip/neon-usage/blob/main/docs/public-package-migration.md) — complete 0.3.x library migration inventory
 - [docs/system-design.md](https://github.com/philip/neon-usage/blob/main/docs/system-design.md) — architecture (historical/aspirational in parts)
 
 Versioning: report `schemaVersion` governs output compatibility (additive fields are non-breaking); the package follows semver at `0.x`.

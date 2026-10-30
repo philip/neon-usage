@@ -218,6 +218,9 @@ export function commaSeparatedValues(value: string): string[] {
   if (values.some((item) => item.length === 0)) {
     throw new Error("comma-separated values must not contain empty entries");
   }
+  if (new Set(values).size !== values.length) {
+    throw new Error("comma-separated values must not contain duplicate entries");
+  }
   return values;
 }
 

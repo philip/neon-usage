@@ -1,7 +1,23 @@
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import { Command, InvalidArgumentError, Option } from "commander";
-// Adapter and composition modules are imported directly, not via the domain barrel.
+import {
+  assertWithinHistoryFilter,
+  type CollectionControl,
+  commaSeparatedValues,
+  contextReport,
+  defaultHistoryProjectIds,
+  hasPartialCoverage,
+  historyQueryFromOptions,
+  liveProjectIds,
+  resolveControlsProjectIds,
+  resolvedContext,
+  resolveOrganizationId,
+} from "./adapter-support.js";
+import type { CapabilityReport } from "./capability-service.js";
+import type { BranchReportQuery } from "./consumption-query.js";
+import { renderControlsTable, renderUtilizationTable } from "./controls-presenter.js";
+import type { ControlsInspection, QuotaUtilizationReport } from "./controls-service.js";
+import type { CurrentPeriodSnapshotReport } from "./current-snapshot-service.js";
 import { defaultAssetsDirectory, startDashboardServer } from "./dashboard-server.js";
 import {
   createNeonDependencies,
@@ -11,40 +27,27 @@ import {
 } from "./default-dependencies.js";
 import { createDemoDependencies } from "./demo-dependencies.js";
 import { createDoctorReport, renderDoctorReport } from "./doctor.js";
+import { CliError } from "./errors.js";
+import { renderEstimateTable, renderPriceTable } from "./estimate-presenter.js";
+import type { EvidenceFactStore } from "./evidence-fact-store.js";
 import {
-  assertWithinHistoryFilter,
-  type BranchReportQuery,
-  branchConsumptionMetrics,
-  CliError,
-  type CollectionControl,
-  type ControlsInspection,
-  type CurrentPeriodSnapshotReport,
-  commaSeparatedValues,
-  contextReport,
-  defaultHistoryProjectIds,
-  type EvidenceFactStore,
-  hasPartialCoverage,
-  historyQueryFromOptions,
-  liveProjectIds,
+  type OrganizationConsumptionSummary,
   type ProjectConsumptionReport,
-  projectConsumptionMetrics,
-  type QuotaUtilizationReport,
-  type ReportDependencies,
-  renderControlsTable,
-  renderEstimateTable,
-  renderHistoryTable,
-  renderPriceTable,
-  renderSnapshotTable,
-  renderUsageTable,
-  renderUtilizationTable,
-  resolveControlsProjectIds,
-  resolvedContext,
-  resolveOrganizationId,
-  serializeMachineJson,
-} from "./index.js";
+  projectReportFromSummary,
+} from "./history-report.js";
+import type { InternalReportDependencies } from "./internal-history.js";
+import { serializeMachineJson } from "./machine-json.js";
+import { measuredSnapshotErrors } from "./measured-snapshot-errors.js";
+import { buildMeasuredUsageExport } from "./measured-usage-export.js";
+import { branchConsumptionMetrics, projectConsumptionMetrics } from "./metric-catalog.js";
 import { resolveNeonCliContext } from "./neon-cli-context.js";
+import { packageVersion } from "./package-version.js";
+import { estimateProjectCosts } from "./pricing-estimate.js";
+import { neonDocumentationRateCard } from "./rate-card.js";
+import { renderHistoryTable, renderSnapshotTable } from "./report-presenter.js";
+import { renderUsageTable } from "./usage-presenter.js";
 
-type CliDependencies = ReportDependencies & {
+type CliDependencies = InternalReportDependencies & {
   write(value: string): void;
   setExitCode?(value: number): void;
 };
@@ -193,8 +196,6 @@ export async function runCli(
 ): Promise<void> {
   const machineJson = (value: unknown) => serializeMachineJson(value, { maxBytes: 25_000_000 });
   const openedStores: EvidenceFactStore[] = [];
-  const packageVersion = (createRequire(import.meta.url)("../package.json") as { version: string })
-    .version;
   const program = new Command()
     .name("neon-usage")
     .version(packageVersion)
@@ -214,7 +215,7 @@ export async function runCli(
     )
     .option(
       "--max-duration <minutes>",
-      "wall-clock ceiling per collection, 1-60 minutes (default 10; past it the report is partial)",
+      "wall-clock ceiling per collection, 1-60 minutes (default 10; stops when reached)",
       eagerValidated((value) => boundedInteger("--max-duration", value, 1, 60)),
     )
     .option(
@@ -270,7 +271,10 @@ export async function runCli(
         ...(collectionBudget ? { collectionBudget } : {}),
       }),
       write: dependencies?.write ?? ((value: string) => process.stdout.write(value)),
-      ...(dependencies?.setExitCode ? { setExitCode: dependencies.setExitCode } : {}),
+      setExitCode: (value) => {
+        if (dependencies === undefined) process.exitCode = value;
+        else dependencies.setExitCode?.(value);
+      },
     };
   };
 
@@ -391,6 +395,142 @@ export async function runCli(
       output === "table" ? renderEstimateTable(estimate) : machineJson(estimate),
     );
     if (estimate.status !== "estimated") activeDependencies.setExitCode?.(2);
+  });
+
+  const exportCommand = program
+    .command("export")
+    .description("Emit the stable, lossless measured-usage JSON contract for downstream cost tools")
+    .addOption(demoOption())
+    .addOption(new Option("--format <format>", "output contract").choices(["measured-usage-json"]))
+    .addOption(
+      new Option(
+        "--source <source>",
+        "authoritative billing history, the Free-compatible current snapshot, or auto (history, falling back to current)",
+      )
+        .choices(["auto", "history", "current"])
+        .default("auto"),
+    )
+    .option(
+      "--project-ids <ids>",
+      "project IDs for the current snapshot, or 'all' (defaults to the linked project)",
+    );
+  addHistoryOptions(exportCommand, projectConsumptionMetrics).action(async (options) => {
+    const historyOption = [
+      "from",
+      "to",
+      "last",
+      "month",
+      "granularity",
+      "metrics",
+      "runId",
+      "resume",
+      "fresh",
+      "storeTail",
+    ].find((name) => exportCommand.getOptionValueSource(name) === "cli");
+    const historyFlag = historyOption?.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+    if (historyFlag && (options.source === "current" || options.projectIds !== undefined)) {
+      throw new CliError({
+        headline: `--${historyFlag} cannot be combined with ${options.projectIds !== undefined ? "--project-ids" : "--source current"}`,
+      });
+    }
+    if (options.projectIds !== undefined && options.source === "history") {
+      throw new CliError({ headline: "--project-ids cannot be combined with --source history" });
+    }
+    let source: "auto" | "history" | "current" = historyOption
+      ? "history"
+      : options.projectIds !== undefined
+        ? "current"
+        : options.source;
+    const explicitProjectIds =
+      options.projectIds !== undefined ? commaSeparatedValues(options.projectIds) : undefined;
+    if (explicitProjectIds?.includes("all") && explicitProjectIds.length !== 1) {
+      throw new CliError({ headline: "all must be the sole --project-ids token" });
+    }
+    const query =
+      source === "current" ? undefined : historyQueryFromOptions(options, runtime.now());
+    const control = source === "current" ? undefined : collectionControl(options);
+    const metricSelectionMode =
+      exportCommand.getOptionValueSource("metrics") === "cli" ? "explicit" : "default";
+    const activeDependencies = resolveDependencies(options.demo);
+    const organizationId = await resolveOrganizationId(options.orgId, activeDependencies);
+    if (source !== "current") {
+      const capability = asReport<CapabilityReport>(
+        await activeDependencies.capabilities(organizationId),
+        "capabilities",
+      );
+      if (capability.capabilities.projectHistory === "unsupported_by_plan") {
+        if (source === "history") {
+          throw new CliError({
+            headline: "UNSUPPORTED_CAPABILITY: consumption history is unavailable for this plan",
+          });
+        }
+        source = "current";
+      } else if (capability.observedAvailability.projectHistory !== "available") {
+        throw new CliError({
+          headline:
+            capability.observedAvailability.projectHistory === "forbidden"
+              ? "AUTHORIZATION_FAILED: consumption history access is forbidden"
+              : "PROVIDER_UNAVAILABLE: consumption history availability could not be confirmed",
+        });
+      } else {
+        source = "history";
+      }
+    }
+
+    if (source === "current") {
+      const projectIds =
+        explicitProjectIds?.[0] === "all"
+          ? undefined
+          : (explicitProjectIds ?? defaultHistoryProjectIds(options, activeDependencies));
+      const snapshot = asReport<CurrentPeriodSnapshotReport>(
+        await (activeDependencies.currentExport ?? activeDependencies.currentReport)(
+          organizationId,
+          projectIds,
+        ),
+        "export",
+      );
+      snapshot.coverage.errors = measuredSnapshotErrors(snapshot.coverage.errors);
+      const measured = buildMeasuredUsageExport({
+        producerVersion: packageVersion,
+        snapshot,
+        now: runtime.now,
+      });
+      activeDependencies.write(machineJson(measured));
+      activeDependencies.setExitCode?.(2);
+      return;
+    }
+
+    // Source selection above guarantees a history query before any collection.
+    if (!query) throw new Error("History source requires a query");
+    query.organizationId = organizationId;
+    const history = await activeDependencies.organizationHistory?.(
+      query,
+      control,
+      undefined,
+      metricSelectionMode,
+    );
+    const summary =
+      history?.summary ??
+      asReport<OrganizationConsumptionSummary>(
+        await activeDependencies.organizationSummary(query, control),
+        "export",
+      );
+    const projectReport = history?.projectReport ?? projectReportFromSummary(summary);
+    const estimate = projectReport
+      ? estimateProjectCosts(projectReport, neonDocumentationRateCard, {
+          extrapolateRateCardDates: true,
+          now: runtime.now,
+        })
+      : undefined;
+    const measured = buildMeasuredUsageExport({
+      producerVersion: packageVersion,
+      history: summary,
+      metricSelectionMode,
+      ...(estimate ? { estimate } : {}),
+      now: runtime.now,
+    });
+    activeDependencies.write(machineJson(measured));
+    if (!measured.coverage.authoritative) activeDependencies.setExitCode?.(2);
   });
 
   program

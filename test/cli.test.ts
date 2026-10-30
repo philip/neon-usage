@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   assertCredentialResolved,
   browserOpenCommand,
@@ -8,8 +8,12 @@ import {
   runCli,
   shouldOpenBrowser,
 } from "../src/cli.js";
+import type { ProjectReportQuery } from "../src/consumption-query.js";
 import { CliError } from "../src/errors.js";
-import type { ProjectReportQuery, UsageOverview } from "../src/index.js";
+import { createOrganizationHistoryService } from "../src/history-report.js";
+import { parseMeasuredBillingUsage } from "../src/measured-usage-contract.js";
+import { deriveBillingValue } from "../src/metric-catalog.js";
+import type { UsageOverview } from "../src/usage-overview-service.js";
 
 describe("CLI project-report", () => {
   it("passes a normalized query to the application service and writes JSON", async () => {
@@ -849,6 +853,292 @@ describe("parseCollectionBudget", () => {
   });
 });
 
+describe("CLI export", () => {
+  // biome-ignore lint/suspicious/noExplicitAny: partial stubs for the unused surface
+  const baseDepsForExport: any = {
+    projectReport: async () => ({ unused: true }),
+    branchReport: async () => ({ unused: true }),
+    organizationSummary: async () => ({ unused: true }),
+    capabilities: async () => ({
+      capabilities: { projectHistory: "supported" },
+      observedAvailability: { projectHistory: "available" },
+    }),
+    currentReport: async () => ({ unused: true }),
+  };
+
+  const authoritativeSummary = (status: "complete" | "partial" = "complete") => ({
+    schemaVersion: 1,
+    generatedAt: "2026-08-27T12:00:00.000Z",
+    asOf: "2026-08-27T00:00:00.000Z",
+    scope: { kind: "organization_aggregate", organizationId: "org-1" },
+    coverage: { status, pageCount: 1, entityCount: 1, qualityFlags: [] },
+    query: {
+      organizationId: "org-1",
+      from: "2026-08-01T00:00:00Z",
+      to: "2026-08-27T00:00:00Z",
+      granularity: "daily",
+      metrics: ["compute_unit_seconds"],
+    },
+    effectiveRange: {
+      from: "2026-08-01T00:00:00.000Z",
+      to: "2026-08-27T00:00:00.000Z",
+      granularity: "daily",
+    },
+    aggregation: "across_projects_periods_buckets_before_allowances",
+    metrics:
+      status === "complete"
+        ? [
+            {
+              name: "compute_unit_seconds",
+              raw: { value: "36000", unit: "cu_second" },
+              derived: deriveBillingValue("compute_unit_seconds", "36000"),
+            },
+          ]
+        : null,
+    attribution: {
+      projects: [
+        {
+          projectId: "p",
+          periods: [
+            {
+              id: "period-p",
+              plan: "scale",
+              start: "2026-08-01T00:00:00Z",
+              buckets: [
+                {
+                  start: "2026-08-01T00:00:00Z",
+                  end: "2026-08-02T00:00:00Z",
+                  metrics: [
+                    {
+                      name: "compute_unit_seconds",
+                      value: "36000",
+                      rawUnit: "cu_second",
+                      presence: "reported",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  const snapshot = () => ({
+    schemaVersion: 1,
+    kind: "current_period_snapshot",
+    historical: false,
+    generatedAt: "2026-08-27T12:00:00.000Z",
+    organizationId: "org-1",
+    requestedProjectIds: ["free-1"],
+    coverage: { status: "complete", projectsRequested: 1, projectsReturned: 1, errors: [] },
+    projects: [
+      {
+        projectId: "free-1",
+        period: { start: "2026-08-01T00:00:00Z", end: "2026-08-27T00:00:00Z" },
+        metrics: {
+          activeTimeSeconds: "3600",
+          computeTimeSeconds: "3600",
+          writtenDataBytes: "1000",
+          dataTransferBytes: "2000000000",
+          dataStorageByteHours: "0",
+        },
+        metricEvidence: {},
+        branchStorage: { status: "available", totalLogicalSizeBytes: "500000000", branches: [] },
+      },
+    ],
+  });
+
+  it("emits the measured-usage contract from authoritative history with exit 0", async () => {
+    let stdout = "";
+    let exitCode: number | undefined;
+    await runCli(
+      ["export", "--org-id", "org-1", "--source", "history"],
+      {
+        ...baseDepsForExport,
+        organizationSummary: async () => authoritativeSummary("complete"),
+        estimate: async () => ({ status: "estimated", lines: [] }),
+        write: (value) => {
+          stdout += value;
+        },
+        setExitCode: (value) => {
+          exitCode = value;
+        },
+      },
+      { now: () => new Date("2026-08-27T12:00:00Z"), isTTY: false },
+    );
+    const measured = JSON.parse(stdout);
+    expect(measured.kind).toBe("measured_billing_usage");
+    expect(measured.source.authoritative).toBe(true);
+    expect(exitCode).toBeUndefined();
+  });
+
+  it.each([["--run-id", "run_1"], ["--resume", "run_existing"], ["--fresh"]])(
+    "collects export history once with %s and prices those same pages",
+    async (...runOptions) => {
+      let sourcePages = 0;
+      let estimateCollections = 0;
+      let receivedControl: unknown;
+      let stdout = "";
+      const service = createOrganizationHistoryService(
+        {
+          getProjectPage: async () => {
+            sourcePages++;
+            return {
+              projects: [
+                {
+                  projectId: "p",
+                  periods: [
+                    {
+                      id: "period-p",
+                      plan: "launch",
+                      start: "2026-08-01T00:00:00Z",
+                      buckets: [
+                        {
+                          start: "2026-08-01T00:00:00Z",
+                          end: "2026-08-02T00:00:00Z",
+                          metrics: [
+                            {
+                              name: "extra_branches_month",
+                              value: "960",
+                              evidence: {
+                                payloadHash: `sha256:${"a".repeat(64)}`,
+                                sourcePath: "/metrics/0",
+                              },
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+              nextCursor: null,
+            };
+          },
+        },
+        { now: () => new Date("2026-08-27T12:00:00Z") },
+      );
+      await runCli(
+        [
+          "export",
+          "--source",
+          "history",
+          "--org-id",
+          "org-1",
+          "--from",
+          "2026-08-01T00:00:00Z",
+          "--to",
+          "2026-08-02T00:00:00Z",
+          "--metrics",
+          "extra_branches_month",
+          ...runOptions,
+        ],
+        {
+          ...baseDepsForExport,
+          organizationHistory: (query, control) => {
+            receivedControl = control;
+            return service.organizationHistory(query);
+          },
+          organizationSummary: (query, control) => {
+            receivedControl = control;
+            return service.organizationSummary(query);
+          },
+          estimate: async (query) => {
+            estimateCollections++;
+            await service.projectReport(query);
+            throw new Error("the same collection run cannot be collected a second time");
+          },
+          write: (value) => {
+            stdout += value;
+          },
+        },
+        { now: () => new Date("2026-08-27T12:00:00Z"), isTTY: false },
+      );
+      const measured = JSON.parse(stdout);
+      expect(sourcePages).toBe(1);
+      expect(estimateCollections).toBe(0);
+      expect(receivedControl).toEqual(
+        runOptions[0] === "--run-id"
+          ? { runId: "run_1" }
+          : runOptions[0] === "--resume"
+            ? { resumeRunId: "run_existing" }
+            : { storeServing: { serve: false, tailBuckets: 0 } },
+      );
+      expect(measured.billableBranchMonthComponents.status).toBe("complete");
+      expect(measured.billableBranchMonthComponents.items[0].billable.exact).toEqual({
+        numerator: "1",
+        denominator: "1",
+      });
+    },
+  );
+
+  it("signals exit 2 when history coverage is partial", async () => {
+    let exitCode: number | undefined;
+    await runCli(
+      ["export", "--org-id", "org-1", "--source", "history"],
+      {
+        ...baseDepsForExport,
+        organizationSummary: async () => authoritativeSummary("partial"),
+        write: () => {},
+        setExitCode: (value) => {
+          exitCode = value;
+        },
+      },
+      { now: () => new Date("2026-08-27T12:00:00Z"), isTTY: false },
+    );
+    expect(exitCode).toBe(2);
+  });
+
+  it("exports the non-authoritative snapshot with exit 2 on --source current", async () => {
+    let stdout = "";
+    let exitCode: number | undefined;
+    await runCli(
+      ["export", "--org-id", "org-1", "--source", "current"],
+      {
+        ...baseDepsForExport,
+        currentReport: async () => snapshot(),
+        write: (value) => {
+          stdout += value;
+        },
+        setExitCode: (value) => {
+          exitCode = value;
+        },
+      },
+      { now: () => new Date("2026-08-27T12:00:00Z"), isTTY: false },
+    );
+    const measured = JSON.parse(stdout);
+    expect(measured.source.contract).toBe("current-period-snapshot");
+    expect(measured.metrics).toBeNull();
+    expect(exitCode).toBe(2);
+  });
+
+  it("auto falls back to the snapshot when the plan has no history API", async () => {
+    let stdout = "";
+    await runCli(
+      ["export", "--org-id", "org-1"],
+      {
+        ...baseDepsForExport,
+        capabilities: async () => ({
+          capabilities: { projectHistory: "unsupported_by_plan" },
+          observedAvailability: { projectHistory: "not_probed" },
+        }),
+        organizationSummary: async () => {
+          throw new Error("unsupported history must never be collected");
+        },
+        currentReport: async () => snapshot(),
+        write: (value) => {
+          stdout += value;
+        },
+        setExitCode: () => {},
+      },
+      { now: () => new Date("2026-08-27T12:00:00Z"), isTTY: false },
+    );
+    expect(JSON.parse(stdout).source.contract).toBe("current-period-snapshot");
+  });
+});
+
 describe("CLI demo mode", () => {
   const captured = () => {
     let stdout = "";
@@ -881,6 +1171,61 @@ describe("CLI demo mode", () => {
     expect(overview.coverage.status).toBe("complete");
   });
 
+  it("exports demo history with the full default metric selection", async () => {
+    const sink = captured();
+    await runCli(["export", "--demo", "--source", "history", "--last", "7d"], sink.deps, {
+      now: () => new Date("2026-10-25T12:00:00Z"),
+      isTTY: false,
+    });
+    const measured = parseMeasuredBillingUsage(JSON.parse(sink.read()));
+    expect(measured.coverage.authoritative).toBe(true);
+    expect(measured.metricSelection.mode).toBe("default");
+    expect(measured.metricSelection.requested).toHaveLength(8);
+  });
+
+  it("preserves an embedded host exit code when demo dependencies omit a setter", async () => {
+    const sink = captured();
+    const priorExitCode = process.exitCode;
+    try {
+      process.exitCode = 17;
+      await runCli(["export", "--demo", "--source", "current"], sink.deps, {
+        now: () => new Date("2026-10-25T12:00:00Z"),
+        isTTY: false,
+      });
+      expect(process.exitCode).toBe(17);
+    } finally {
+      process.exitCode = priorExitCode;
+    }
+  });
+
+  it("sets the standalone demo current export process exit code to 2", async () => {
+    const priorExitCode = process.exitCode;
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      process.exitCode = 0;
+      await runCli(["export", "--demo", "--source", "current"], undefined, {
+        now: () => new Date("2026-10-25T12:00:00Z"),
+        isTTY: false,
+      });
+      expect(process.exitCode).toBe(2);
+    } finally {
+      process.exitCode = priorExitCode;
+      stdout.mockRestore();
+    }
+  });
+
+  it("exports demo current usage through the existing current-report fallback", async () => {
+    const sink = captured();
+    await runCli(["export", "--demo", "--source", "current"], sink.deps, {
+      now: () => new Date("2026-08-12T15:00:00Z"),
+      isTTY: false,
+    });
+    expect(JSON.parse(sink.read()).source).toEqual({
+      contract: "current-period-snapshot",
+      authoritative: false,
+    });
+  });
+
   it("renders demo tables for the linked-project default", async () => {
     const sink = captured();
     await runCli(["project-report", "--demo", "--output", "table"], sink.deps, {
@@ -889,4 +1234,153 @@ describe("CLI demo mode", () => {
     });
     expect(sink.read()).toContain("org-demo-42813975 · api-production-11837462");
   });
+});
+
+describe("CLI export source options", () => {
+  const historyOptions = [
+    ["--from", "2026-08-01T00:00:00Z"],
+    ["--to", "2026-08-02T00:00:00Z"],
+    ["--last", "7d"],
+    ["--month", "previous"],
+    ["--granularity", "daily"],
+    ["--metrics", "compute_unit_seconds"],
+    ["--run-id", "run_new"],
+    ["--resume", "run_existing"],
+    ["--fresh"],
+    ["--store-tail", "0"],
+  ];
+  const dependencies = () => ({
+    projectReport: vi.fn(async () => ({})),
+    branchReport: vi.fn(async () => ({})),
+    organizationSummary: vi.fn(async () => {
+      throw new Error("history selected; no consumption history API");
+    }),
+    capabilities: vi.fn(async () => ({
+      capabilities: { projectHistory: "supported" },
+      observedAvailability: { projectHistory: "available" },
+    })),
+    currentReport: vi.fn(async () => {
+      throw new Error("current selected");
+    }),
+    write: vi.fn(),
+  });
+  const runtime = { now: () => new Date("2026-08-27T12:00:00Z"), isTTY: false };
+
+  for (const conflict of [
+    ["--source", "current"],
+    ["--project-ids", "p"],
+  ]) {
+    it.each(historyOptions)(
+      `rejects %s with ${conflict.join(" ")} before any collection`,
+      async (...flag) => {
+        const deps = dependencies();
+        await expect(
+          runCli(["export", "--org-id", "org-1", ...conflict, ...flag], deps, runtime),
+        ).rejects.toBeInstanceOf(CliError);
+        expect(deps.capabilities).not.toHaveBeenCalled();
+        expect(deps.organizationSummary).not.toHaveBeenCalled();
+        expect(deps.currentReport).not.toHaveBeenCalled();
+      },
+    );
+  }
+
+  it("rejects project IDs with explicit history", async () => {
+    const deps = dependencies();
+    await expect(
+      runCli(["export", "--source", "history", "--project-ids", "p"], deps, runtime),
+    ).rejects.toThrow(/--project-ids.*--source history/);
+    expect(deps.capabilities).not.toHaveBeenCalled();
+  });
+
+  it.each(historyOptions)("%s selects history and never falls back", async (...flag) => {
+    const deps = dependencies();
+    const range =
+      flag[0] === "--from"
+        ? ["--to", "2026-08-02T00:00:00Z"]
+        : flag[0] === "--to"
+          ? ["--from", "2026-08-01T00:00:00Z"]
+          : [];
+    await expect(
+      runCli(["export", "--org-id", "org-1", ...flag, ...range], deps, runtime),
+    ).rejects.toThrow("history selected");
+    expect(deps.organizationSummary).toHaveBeenCalledOnce();
+    expect(deps.currentReport).not.toHaveBeenCalled();
+  });
+
+  it.each(["p", " all "])(
+    "project IDs %j select current without history defaults interfering",
+    async (ids) => {
+      const deps = dependencies();
+      await expect(
+        runCli(["export", "--org-id", "org-1", "--project-ids", ids], deps, runtime),
+      ).rejects.toThrow("current selected");
+      expect(deps.organizationSummary).not.toHaveBeenCalled();
+      expect(deps.currentReport).toHaveBeenCalledWith(
+        "org-1",
+        ids.trim() === "all" ? undefined : ["p"],
+      );
+    },
+  );
+
+  it.each(["", " ", ",p", "p,", "p,,q", "p,p", "p, p ", "all,p", "p,all"])(
+    "rejects invalid project list %j before any source request",
+    async (ids) => {
+      const deps = dependencies();
+      await expect(
+        runCli(["export", "--source", "current", "--project-ids", ids], deps, runtime),
+      ).rejects.toThrow(/empty|duplicate|sole/);
+      expect(deps.capabilities).not.toHaveBeenCalled();
+      expect(deps.currentReport).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["", "compute_unit_seconds,", "compute_unit_seconds, compute_unit_seconds"])(
+    "rejects invalid metrics %j before capability probing",
+    async (metrics) => {
+      const deps = dependencies();
+      await expect(runCli(["export", "--metrics", metrics], deps, runtime)).rejects.toThrow(
+        /empty|duplicate/,
+      );
+      expect(deps.capabilities).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["forbidden", "temporarily_unavailable", "not_probed"])(
+    "auto never falls back on %s history",
+    async (availability) => {
+      const deps = dependencies();
+      deps.capabilities.mockResolvedValue({
+        capabilities: { projectHistory: "supported" },
+        observedAvailability: { projectHistory: availability },
+      });
+      await expect(runCli(["export", "--org-id", "org-1"], deps, runtime)).rejects.toThrow();
+      expect(deps.organizationSummary).not.toHaveBeenCalled();
+      expect(deps.currentReport).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not use error wording to fall back after observed history availability", async () => {
+    const deps = dependencies();
+    await expect(runCli(["export", "--org-id", "org-1"], deps, runtime)).rejects.toThrow(
+      "history selected",
+    );
+    expect(deps.currentReport).not.toHaveBeenCalled();
+  });
+
+  it.each([[], ["--source", "history"], ["--last", "7d"]])(
+    "rejects confirmed unsupported explicit history %j",
+    async (...flags) => {
+      if (flags.length === 0) flags = ["--metrics", "compute_unit_seconds"];
+      const deps = dependencies();
+      deps.capabilities.mockResolvedValue({
+        capabilities: { projectHistory: "unsupported_by_plan" },
+        observedAvailability: { projectHistory: "not_probed" },
+      });
+      await expect(
+        runCli(["export", "--org-id", "org-1", ...flags], deps, runtime),
+      ).rejects.toThrow(/UNSUPPORTED_CAPABILITY/);
+      expect(deps.organizationSummary).not.toHaveBeenCalled();
+      expect(deps.currentReport).not.toHaveBeenCalled();
+    },
+  );
 });

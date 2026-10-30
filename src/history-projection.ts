@@ -1,5 +1,6 @@
 import { compareCanonicalText } from "./canonical-order.js";
 import type { FactEvidenceRef, SourcePeriod } from "./consumption-source.js";
+import { historyContracts } from "./history-contracts.js";
 import { rawUnits } from "./metric-catalog.js";
 
 export type ProjectedHistoryMetric = {
@@ -25,6 +26,7 @@ export type ProjectedHistoryPeriod = {
 export function projectHistoryPeriods(
   periods: SourcePeriod[],
   requestedMetrics: string[],
+  supportedMetrics: readonly string[] = historyContracts.project.supportedMetrics,
 ): {
   periods: ProjectedHistoryPeriod[];
   projectedZero: boolean;
@@ -58,7 +60,7 @@ export function projectHistoryPeriods(
             metrics: [
               ...requestedMetrics.map((name): ProjectedHistoryMetric => {
                 const metric = reported.get(name);
-                if (rawUnits[name] === undefined) {
+                if (!supportedMetrics.includes(name)) {
                   unknownMetric = true;
                   return {
                     name,
@@ -89,11 +91,12 @@ export function projectHistoryPeriods(
                     compareCanonicalText(left.value, right.value),
                 )
                 .map((metric): ProjectedHistoryMetric => {
-                  if (rawUnits[metric.name] === undefined) unknownMetric = true;
+                  const supported = supportedMetrics.includes(metric.name);
+                  if (!supported) unknownMetric = true;
                   return {
                     name: metric.name,
                     value: metric.value,
-                    rawUnit: rawUnits[metric.name] ?? "unknown",
+                    rawUnit: supported ? (rawUnits[metric.name] ?? "unknown") : "unknown",
                     presence: "reported",
                     ...(metric.evidence ? { evidence: metric.evidence } : {}),
                   };

@@ -28,6 +28,7 @@ import {
 import { type HistoryContract, historyContracts } from "./history-contracts.js";
 import { canonicalFactsFromPeriods } from "./history-facts.js";
 import { type ProjectedHistoryPeriod, projectHistoryPeriods } from "./history-projection.js";
+import type { OrganizationHistoryService } from "./internal-history.js";
 import { deriveBillingValue, type RawUnit, rawUnits } from "./metric-catalog.js";
 import type { OperationContext } from "./operation-context.js";
 import {
@@ -45,8 +46,8 @@ import {
 
 const projectHistoryContract = historyContracts.project;
 const branchHistoryContract = historyContracts.branch;
-const projectMetricNames = new Set<string>(projectHistoryContract.metrics);
-const branchMetricNames = new Set<string>(branchHistoryContract.metrics);
+const projectMetricNames = new Set<string>(projectHistoryContract.supportedMetrics);
+const branchMetricNames = new Set<string>(branchHistoryContract.supportedMetrics);
 
 export type HistoryServiceOptions<Page> = {
   now?: () => Date;
@@ -296,7 +297,11 @@ async function runHistoryReport<Page, Entity extends { periods: SourcePeriod[] }
   let projectedZero = false;
   let unknownMetric = false;
   const entities = [...collection.items].sort(run.compare).map((entity) => {
-    const projection = projectHistoryPeriods(entity.periods, run.requestedMetrics);
+    const projection = projectHistoryPeriods(
+      entity.periods,
+      run.requestedMetrics,
+      run.contract.supportedMetrics,
+    );
     projectedZero ||= projection.projectedZero;
     unknownMetric ||= projection.unknownMetric;
     return { entity, periods: projection.periods };
@@ -343,9 +348,25 @@ export function createConsumptionService(
   source: ProjectConsumptionSource,
   options: HistoryServiceOptions<ProjectConsumptionPage> = {},
 ): ConsumptionService {
+  const service = createOrganizationHistoryService(source, options);
+  return {
+    projectReport: service.projectReport,
+    organizationSummary: service.organizationSummary,
+  };
+}
+
+/** Internal history orchestration; the public factory exposes only report projections. */
+export function createOrganizationHistoryService(
+  source: ProjectConsumptionSource,
+  options: HistoryServiceOptions<ProjectConsumptionPage> = {},
+): OrganizationHistoryService {
   const serviceOptions = validatedHistoryOptions(options);
-  const service: ConsumptionService = {
+  const service: OrganizationHistoryService = {
     async organizationSummary(query: ProjectReportQuery, context?: OperationContext) {
+      return (await service.organizationHistory(query, context)).summary;
+    },
+
+    async organizationHistory(query, context, metricSelectionMode = "explicit") {
       if (query.projectIds) {
         throw new ConsumptionQueryError(
           "INVALID_FILTER",
@@ -367,7 +388,11 @@ export function createConsumptionService(
         attribution: { projects: report.projects },
       };
       if (report.coverage.status !== "complete") {
-        return { ...common, metrics: null };
+        return {
+          summary: { ...common, metrics: null },
+          projectReport: report,
+          metricSelectionMode,
+        };
       }
       const totals = new Map(query.metrics.map((name) => [name, 0n]));
       for (const project of report.projects) {
@@ -382,15 +407,19 @@ export function createConsumptionService(
         }
       }
       return {
-        ...common,
-        metrics: query.metrics.map((name) => {
-          const value = (totals.get(name) ?? 0n).toString();
-          return {
-            name,
-            raw: { value, unit: rawUnits[name] ?? "unknown" },
-            derived: deriveBillingValue(name, value),
-          };
-        }),
+        summary: {
+          ...common,
+          metrics: query.metrics.map((name) => {
+            const value = (totals.get(name) ?? 0n).toString();
+            return {
+              name,
+              raw: { value, unit: rawUnits[name] ?? "unknown" },
+              derived: deriveBillingValue(name, value),
+            };
+          }),
+        },
+        projectReport: report,
+        metricSelectionMode,
       };
     },
 
@@ -654,6 +683,29 @@ export function createConsumptionService(
     },
   };
   return service;
+}
+
+/** Legacy injected summaries can be priced only when they retain source identities. */
+export function projectReportFromSummary(
+  summary: OrganizationConsumptionSummary,
+): ProjectConsumptionReport | undefined {
+  if (
+    summary.attribution.projects.some((project) =>
+      project.periods.some((period) => !period.id || !period.plan || !period.start),
+    )
+  )
+    return undefined;
+  return {
+    schemaVersion: summary.schemaVersion,
+    generatedAt: summary.generatedAt,
+    asOf: summary.asOf,
+    coverage: summary.coverage,
+    query: summary.query,
+    effectiveRange: summary.effectiveRange,
+    ...(summary.evidence ? { evidence: summary.evidence } : {}),
+    ...(summary.servedFromStore ? { servedFromStore: summary.servedFromStore } : {}),
+    projects: summary.attribution.projects,
+  };
 }
 
 export function createBranchConsumptionService(

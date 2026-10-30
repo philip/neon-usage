@@ -18,9 +18,41 @@ To work on the page itself, `npm run dev:dashboard` starts the API and the Vite 
 
 Sanitized live captures for Free, Launch, and Scale live under `test/fixtures/replay/live` with byte-stable expected output (`test/live-replay.test.ts`). Two live-validated wire behaviors are encoded in the Neon adapter: the `/projects` endpoint terminates with an empty page that still carries a cursor, and `/branches` omits `logical_size` for branches whose size has not been computed (reported as an explicit unknown). Regenerate captures with a recording `fetch` around `createNeonApiSource`; sanitize every organization/project/branch identifier and name, including JSON object keys, and scrub `email`/`created_by` before committing.
 
+## Verify public package changes
+
+Use Node.js 24 and the declared dependencies. `npm run check` runs source typechecks, dashboard typechecks, lint, and source tests; `test:package` separately checks emitted public artifacts after building. `npm run verify:package -- --output /tmp/neon-usage-release-candidate` performs the full check/build/pack/installed-consumer sequence and leaves one tarball plus its checksum manifest. Use an empty output directory outside the checkout.
+
+`package-fixtures/consumer` stays outside ordinary TypeScript and Vitest globs and runs only after copying to a clean temporary installation. Its examples match the README and [SDK guide](docs/sdk.md) and compile against installed public declarations. The gate checks both export-map entries, SDK/CLI runtime behavior, forbidden subpaths, and the browser module graph. Do not substitute source aliases or a neighboring checkout for this release proof.
+
+## Release the package
+
+Release only from a clean, reviewed commit tagged with the package version. Confirm the version is unused on the public registry:
+
+```sh
+npm view neon-usage versions dist-tags --json --registry=https://registry.npmjs.org
+npm whoami --registry=https://registry.npmjs.org
+```
+
+Tag the commit, then verify it into a new empty directory. Verification records the exact commit, tag, tarball name, and checksum in the adjacent manifest.
+
+```sh
+git tag -a v0.4.0 -m "neon-usage v0.4.0"
+release_dir=$(mktemp -d /tmp/neon-usage-release.XXXXXX)
+npm_config_registry=https://registry.npmjs.org npm run verify:package -- --output "$release_dir"
+```
+
+Review the manifest and publish the same tarball without rebuilding it:
+
+```sh
+cat "$release_dir/neon-usage-0.4.0.tgz.manifest.json"
+npm_config_registry=https://registry.npmjs.org npm run release:publish -- "$release_dir/neon-usage-0.4.0.tgz"
+```
+
+`release:publish` runs only as an explicit human command outside CI. It requires the verified commit and tag, a clean checkout, a matching checksum, and an unused registry version.
+
 ## Module map
 
-`src/index.ts` is a pure domain barrel; adapters import domain code only from it. Adapter-to-adapter wiring (the CLI starting the dashboard server, CLI-context resolution) imports the sibling adapter modules directly and stays out of the barrel. The implementation lives in modules grouped by seam (the principal ones below):
+`src/index.ts` is the deliberate public Node.js SDK barrel. `src/contracts.ts` is the pure browser-safe contracts barrel. Internal callers import focused sibling modules directly; they do not use the public barrel as an internal dependency hub. The implementation lives in modules grouped by seam (the principal ones below):
 
 **Queries and sources**
 
@@ -33,7 +65,7 @@ Sanitized live captures for Free, Launch, and Scale live under `test/fixtures/re
 
 - `history-contracts.ts` — runtime-frozen project and branch policy: source contract, endpoint, page size, beta/coverage status, and supported metrics. A future Neon product adds a descriptor here plus a wire adapter, reusing everything below.
 - `history-collection.ts` — bounded cursor walking with cycle/empty-page/page-limit detection, durable page commits, and resume.
-- `history-projection.ts` — shared period/bucket/metric projection, including projected-zero and unknown-metric semantics.
+- `history-projection.ts` — shared period/bucket/metric projection, including projected-zero and unknown-metric semantics. Support is checked against the source endpoint; a globally known snapshot-only metric is still unknown in history.
 - `history-facts.ts`, `fact-identity.ts` — canonical facts from source periods; effective-fact and observation-revision identities.
 - `history-report.ts` — the one collection-and-projection path both history products share; `createConsumptionService` and `createBranchConsumptionService` are thin wrappers over it.
 
@@ -41,10 +73,15 @@ Sanitized live captures for Free, Launch, and Scale live under `test/fixtures/re
 
 - `capability-service.ts` — declared plan capability as a data table, kept separate from observed endpoint availability.
 - `current-snapshot-service.ts` — Free-compatible current-period snapshots with per-project coverage errors and bounded fan-out. The project-detail cumulative metrics it reads are the quota-enforcement family and are live; `data_storage_bytes_hour` alone is legacy and observed unpopulated (reported as-is; branch logical size is the storage signal).
+- Snapshot `maxItems` is shared across project inventory and every branch inventory, including unavailable project IDs. Whole pages are charged before their items are retained; a limited branch walk produces partial coverage and withholds the combined storage total. `default-dependencies.ts` applies configured/default aggregate duration, item, and byte limits to both current report and current export, preserving caller cancellation. Statusless inventory diagnostics retain only allowlisted package codes and fixed messages; genuine local limit exceptions become fixed `COLLECTION_LIMIT_REACHED` diagnostics in measured output.
 - `usage-overview-service.ts` — enriches complete accounting projections with names; never weakens cancellation or evidence-integrity guarantees.
 - `controls-service.ts` — read-only inspection of Neon's native controls: the alert-only organization spending-notification threshold and per-project quotas (suspend enforcement), plus the quota-utilization join against current-period usage. The two control kinds are separate domain concepts and never merge.
 - `rate-card.ts`, `pricing-estimate.ts` — pricing as a separate projection: an immutable source-cited rate card and an estimator over complete project reports. Exact fraction money math; unknown plans and unpublished rates produce unavailable lines, never guesses; Free is not billed.
+- `measured-usage-contract.ts` — measured types, bounded runtime validation, cross-field accounting checks, schema constants, and `parseMeasuredBillingUsage`; shared by SDK and CLI. History requires billing granularity; snapshots require explicit point-in-time storage coverage even when partial.
+- `metric-definitions.ts` and `metric-presentation.ts` — frozen public semantic definitions and explicit default metric lists, separated from private display metadata shared by CLI/dashboard. The pure definitions module also owns the frozen base export formulas; the exporter adds formulas for selected catalog metrics without changing those base entries.
+- `measured-usage-export.ts` — the private projection into `measured_billing_usage` (`export` command). A versioned, lossless projection of an authoritative history summary or a Free-plan snapshot into one metric vocabulary, deliberately separate from the predictive comparison workload: it copies exact rationals and pre-netted billable branch-months, marks the snapshot source non-authoritative, preserves projected-zero versus reported presence, and always leaves comparison sizing inputs unresolved. `MEASURED_USAGE_SCHEMA_VERSION` bumps only on a breaking change; consumers reject unrecognized versions.
 - `usage-presenter.ts`, `report-presenter.ts`, `estimate-presenter.ts`, `controls-presenter.ts` — human table rendering for the overview, history time-series and snapshot reports, estimates/price tables, and controls/utilization; presenters collect and reinterpret nothing, and JSON stays the machine contract.
+- Per-project price tables add an `OTHER` column when priced metrics fall outside the fixed groups, so every line amount contributes to the row and column totals.
 - `machine-json.ts`, `canonical-order.ts` — machine-output bytes and canonical ordering.
 
 **Adapters and composition**
@@ -52,6 +89,7 @@ Sanitized live captures for Free, Launch, and Scale live under `test/fixtures/re
 - `adapter-support.ts` — machinery shared by the delivery adapters: string-option parsing into report queries (including `--month`/`?month`), default ranges, organization and project-ID resolution, partial-coverage detection, the `context` report body, `serializeCollections`/`memoizeReports` wrappers, `withPlanHint`, and the `ReportDependencies` seam both adapters call through.
 - `default-dependencies.ts` — the composition root: `createNeonDependencies(config)` wires a credential and store path into the real Neon-backed `ReportDependencies` (collecting/reading sources, the durable store with in-memory fallback, serve-from-store, chunked estimation, name enrichment). Adapter-neutral — CLI-specific side effects arrive via callbacks. `defaultStorePath` resolves the per-user store location. Both adapters build identical dependencies through this one seam.
 - `demo-dependencies.ts` — the demo composition root (`--demo` on the dashboard and report commands): a deterministic synthetic source wired through the REAL services (collection validation, projection, estimation), so demo reports have genuine shapes and honest coverage; no credential, Neon API, external network, or store is touched, only one fictional organization is served, and the page and CLI both label the output as demo data.
+- `client.ts` and `client-errors.ts` — the public server-only SDK, operation-scoped stores, limits, cancellation, source selection, generated identity/version, and sanitized public errors.
 - `bin.ts` — the executable entry point (`neon-usage`); it only imports `runCli` and runs it, so there is no fragile main-module detection under a bin symlink.
 - `doctor.ts` — the offline `doctor` diagnosis: credential source and OAuth-expiry state (via `diagnoseNeonCliContext`, which never returns credential values), resolved context, store path/backend/health (read-only SQLite inspection that creates nothing), the built-in request budget, and the bundled rate-card revision.
 - `cli.ts` — the command-line adapter over `ReportDependencies`: commander wiring, table/JSON output selection, exit code 2 on partial coverage, and the CLI-specific credential/store/warning glue.
@@ -79,7 +117,7 @@ These are **vendored** (copied into the repo, presentational-first), not a runti
 
 ## Transport precision
 
-Consumption and snapshot counters can exceed JavaScript's safe integer range. The Neon adapter uses the public API with `lossless-json` and validates responses with Zod, preserving JSON integers as decimal strings. A defensive 40-digit ceiling bounds arbitrary-precision work against hostile responses; this is a local safety limit, not a published Neon counter limit. Known metric dimensions and exact conversion live in `metric-catalog.ts`; unknown source metrics remain source observations and cannot be assigned an arbitrary billing unit.
+Consumption and snapshot counters can exceed JavaScript's safe integer range. The Neon adapter uses the public API with `lossless-json` and validates responses with Zod, preserving JSON integers as decimal strings. A defensive 40-digit ceiling bounds transport counters; this is a local safety limit, not a published Neon counter limit. The public converter and measured parser share a canonical, non-negative decimal-integer grammar capped at 128 digits before exact arithmetic; signs, leading zeros, whitespace, and alternate numeric syntax are rejected. Known metric dimensions and exact conversion live in `metric-catalog.ts`; unknown source metrics remain source observations and cannot be assigned an arbitrary billing unit.
 
 Every API request passes through the injected account request coordinator (the CLI defaults to 180 requests/minute; `--request-budget` raises or lowers it, 1-600), with bounded GET retries, request deadlines, and independent cancellation via `OperationContext`; a source may also receive `shutdownSignal` to stop every operation of a shared adapter. A cancelled operation never dispatches its request.
 
@@ -117,6 +155,5 @@ Roadmap (roughly ordered):
 - Per-project named rows in the `estimate` table (`renderPriceTable` already has the pattern).
 - Named billing-period presets and shell completion once output contracts stabilize.
 - Store retention: a read-only `store-status` view plus dry-run/apply pruning by age and terminal state (the evidence/fact store is append-only and grows without bound today).
-- A supported high-level TypeScript client (`createNeonUsageClient`): typed report methods and errors, cancellation, `close()`, a stable-vs-advanced export boundary.
 
 The parked hosted-service track (scheduled collection, Postgres store, retention, policies/webhooks, audit, auth) and phase-3 read-write workflows are described as vision in [`docs/system-design.md`](./docs/system-design.md), gated by the [`SECURITY.md`](./SECURITY.md) mutation-safety checklist.

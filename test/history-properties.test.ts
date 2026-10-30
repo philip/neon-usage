@@ -1,12 +1,11 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import {
-  type BranchConsumptionSource,
-  createBranchConsumptionService,
-  createConsumptionService,
-  type ProjectConsumptionSource,
-  type SourceProjectConsumption,
-} from "../src/index.js";
+import type {
+  BranchConsumptionSource,
+  ProjectConsumptionSource,
+  SourceProjectConsumption,
+} from "../src/consumption-source.js";
+import { createBranchConsumptionService, createConsumptionService } from "../src/history-report.js";
 import { serializeMachineJson } from "../src/machine-json.js";
 
 describe("history properties", () => {

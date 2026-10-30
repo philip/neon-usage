@@ -5,12 +5,16 @@
 // global install both invoke through node_modules/.bin). runCli lives in a
 // plain module that can be imported without side effects.
 
+import { withPlanHint } from "./adapter-support.js";
 import { runCli } from "./cli.js";
-import { formatCliError } from "./cli-error-format.js";
+import { formatCliError, serializedOutputErrorParts } from "./cli-error-format.js";
 import { CliError, type CliErrorParts, sanitizeErrorText } from "./errors.js";
-import { withPlanHint } from "./index.js";
+import { SerializedOutputTooLargeError } from "./machine-json.js";
 
 runCli(process.argv.slice(2)).catch((error: unknown) => {
+  if (error instanceof SerializedOutputTooLargeError) {
+    error = new CliError(serializedOutputErrorParts(error));
+  }
   const rawStatus =
     typeof error === "object" && error !== null && "status" in error
       ? (error as { status?: unknown }).status

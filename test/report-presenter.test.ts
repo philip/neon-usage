@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectConsumptionReport } from "../src/index.js";
+import type { ProjectConsumptionReport } from "../src/history-report.js";
 import { renderHistoryTable } from "../src/report-presenter.js";
 
 function report(projectIds: string[] | undefined, observed: string[]): ProjectConsumptionReport {
