@@ -1,6 +1,12 @@
+import assert from "node:assert/strict";
 import { describe, expect, it } from "vitest";
 import { renderEstimateTable, renderPriceTable } from "../src/estimate-presenter.js";
-import type { ProjectConsumptionReport } from "../src/history-report.js";
+import {
+  createOrganizationHistoryService,
+  type ProjectConsumptionReport,
+} from "../src/history-report.js";
+import { createInMemoryEvidenceFactStore } from "../src/in-memory-fact-store.js";
+import { buildMeasuredUsageExport } from "../src/measured-usage-export.js";
 import { estimateProjectCosts } from "../src/pricing-estimate.js";
 import { neonDocumentationRateCard } from "../src/rate-card.js";
 
@@ -74,6 +80,115 @@ function report(
 }
 
 describe("estimateProjectCosts", () => {
+  it("prices the same collected organization report under fixed-run and fresh collection control", async () => {
+    for (const explicitRun of [true, false]) {
+      const store = createInMemoryEvidenceFactStore();
+      let sourcePages = 0;
+      const evidence = { evidenceId: "evidence:task4", payloadHash: `sha256:${"a".repeat(64)}` };
+      await store.writeEvidence(
+        {
+          evidenceId: evidence.evidenceId,
+          sourceAccount: "task-4-test",
+          sourceContract: "consumption-history-v2-projects",
+          requestedAt: "2026-08-09T00:00:00Z",
+          completedAt: "2026-08-09T00:00:01Z",
+          request: {
+            method: "GET",
+            path: "/consumption_history/v2/projects",
+            query: "",
+            cursorIn: null,
+            fingerprint: evidence.payloadHash,
+          },
+          response: { status: 200, cursorOut: null, payloadHash: evidence.payloadHash },
+          attempt: 1,
+        },
+        new AbortController().signal,
+      );
+      const base = report([
+        { projectId: "p", plan: "launch", metrics: { extra_branches_month: "960" } },
+      ]);
+      const service = createOrganizationHistoryService(
+        {
+          getProjectPage: async () => {
+            sourcePages++;
+            return {
+              projects: base.projects.map((project) => ({
+                ...project,
+                periods: project.periods.map((period) => ({
+                  ...period,
+                  buckets: period.buckets.map((bucket) => ({
+                    ...bucket,
+                    metrics: bucket.metrics.map((metric) => {
+                      assert(metric.value !== null);
+                      return {
+                        name: metric.name,
+                        value: metric.value,
+                        evidence: { ...evidence, sourcePath: "/metrics/0" },
+                      };
+                    }),
+                  })),
+                })),
+              })),
+              nextCursor: null,
+              evidence,
+            };
+          },
+        },
+        {
+          now,
+          factStore: store,
+          sourceAccount: "task-4-test",
+          ...(explicitRun ? { createRunId: () => "run_task4" as const } : {}),
+          storeServing: { serve: false, tailBuckets: 0 },
+        },
+      );
+      const history = await service.organizationHistory(
+        base.query,
+        undefined,
+        explicitRun ? "default" : undefined,
+      );
+      const estimate = estimateProjectCosts(history.projectReport, coveringRateCard, { now });
+      const measured = buildMeasuredUsageExport({
+        producerVersion: "test",
+        history: history.summary,
+        estimate,
+        now,
+        metricSelectionMode: history.metricSelectionMode,
+      });
+      expect(sourcePages).toBe(1);
+      expect(history.projectReport.projects).toBe(history.summary.attribution.projects);
+      expect(estimate.disposition).toBe("estimate");
+      expect(measured.billableBranchMonthComponents.status).toBe("complete");
+      expect(measured.billableBranchMonthComponents.items[0]?.billable.exact).toEqual({
+        numerator: "1",
+        denominator: "1",
+      });
+      expect(measured.metricSelection.mode).toBe(explicitRun ? "default" : "explicit");
+      const runs = await store.listCollectionRuns({
+        sourceAccount: "task-4-test",
+        sourceContract: "consumption-history-v2-projects",
+      });
+      expect(runs).toHaveLength(1);
+      if (explicitRun) expect(runs[0]?.runId).toBe("run_task4");
+      if (explicitRun) {
+        const resumed = await createOrganizationHistoryService(
+          {
+            getProjectPage: async () => {
+              throw new Error("completed run must replay its collected page");
+            },
+          },
+          { now, factStore: store, sourceAccount: "task-4-test", resumeRunId: "run_task4" },
+        ).organizationHistory(base.query);
+        expect(resumed.summary.metrics).toEqual(history.summary.metrics);
+        const resumedEstimate = estimateProjectCosts(resumed.projectReport, coveringRateCard, {
+          now,
+        });
+        expect(resumedEstimate.lines).toEqual(estimate.lines);
+      }
+      store.close();
+    }
+  });
+
   it("prices Scale usage exactly and labels the result an estimate", () => {
     const estimate = estimateProjectCosts(
       report([
@@ -298,6 +413,31 @@ describe("estimateProjectCosts", () => {
       expect(estimate.lines[0]).toMatchObject({ status: "estimated", ratePerUnit: computeRate });
       expect(estimate.totalAmount).not.toBeNull();
     }
+  });
+
+  it("nets the Agent plan's 100 GB public-transfer allowance, not Scale's 500 GB", () => {
+    // 150 GB of public transfer on Agent: 100 GB is free, 50 GB bills at
+    // $0.10/GB = $5. On Scale the whole 150 GB would be inside the 500 GB
+    // allowance and bill $0.
+    const estimate = estimateProjectCosts(
+      report([
+        {
+          projectId: "agent-project",
+          plan: "agent",
+          metrics: { public_network_transfer_bytes: "150000000000" },
+        },
+      ]),
+      coveringRateCard,
+      { now },
+    );
+
+    const transfer = estimate.lines.find((line) => line.metric === "public_network_transfer_bytes");
+    expect(transfer).toMatchObject({
+      status: "estimated",
+      allowanceApplied: { rawQuantity: "100000000000", scope: "per_project" },
+      billable: { value: "50", unit: "gb" },
+      amount: { decimalApproximation: "5" },
+    });
   });
 
   it("marks an unpublished rate unavailable unless usage is zero", () => {
@@ -754,5 +894,37 @@ describe("estimateProjectCosts", () => {
     );
     expect(table).not.toContain("project-idle");
     expect(table).toMatch(/TOTAL\s+\$2\.22\s+\$0\.00\s+\$10\.00\s+\$0\.00\s+\$12\.22/);
+  });
+
+  it("shows priced metrics outside the fixed columns in project rows and totals", () => {
+    const estimate = estimateProjectCosts(
+      report([
+        { projectId: "project-known", plan: "scale", metrics: { compute_unit_seconds: "36000" } },
+      ]),
+      coveringRateCard,
+      { now },
+    );
+    const priced = estimate.lines[0];
+    assert(priced?.amount && estimate.totalAmount);
+    estimate.lines.push({
+      ...priced,
+      projectId: "project-future",
+      metric: "fixture_priced_metric",
+    });
+    estimate.totalsByMetric?.push({ metric: "fixture_priced_metric", amount: priced.amount });
+    estimate.totalAmount = {
+      ...estimate.totalAmount,
+      decimalApproximation: "4.44",
+      exact: {
+        ...estimate.totalAmount.exact,
+        numerator: (BigInt(estimate.totalAmount.exact.numerator) * 2n).toString(),
+      },
+    };
+    const table = renderPriceTable(estimate, new Map([["project-future", "Future"]]));
+    expect(table).toContain("OTHER");
+    expect(table).toMatch(
+      /Future\s+project-future\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$2\.22\s+\$2\.22/,
+    );
+    expect(table).toMatch(/TOTAL\s+\$2\.22\s+\$0\.00\s+\$0\.00\s+\$0\.00\s+\$2\.22\s+\$4\.44/);
   });
 });

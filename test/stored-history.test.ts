@@ -2,14 +2,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  createConsumptionService,
-  createInMemoryEvidenceFactStore,
-  createSqliteEvidenceFactStore,
-  type EvidenceFactStore,
-  type ProjectConsumptionSource,
-  type ProjectReportQuery,
-} from "../src/index.js";
+import type { ProjectReportQuery } from "../src/consumption-query.js";
+import type { ProjectConsumptionSource } from "../src/consumption-source.js";
+import type { EvidenceFactStore } from "../src/evidence-fact-store.js";
+import { createConsumptionService } from "../src/history-report.js";
+import { createInMemoryEvidenceFactStore } from "../src/in-memory-fact-store.js";
+import { createSqliteEvidenceFactStore } from "../src/sqlite-fact-store.js";
 import { bucketStarts, planStoredServing } from "../src/stored-history.js";
 import { sqliteModule } from "./support/sqlite-availability.js";
 

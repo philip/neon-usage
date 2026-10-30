@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
-import {
-  createConsumptionService,
-  type ProjectConsumptionSource,
-  type ProjectReportQuery,
-} from "../src/index.js";
+import type { ProjectReportQuery } from "../src/consumption-query.js";
+import type { ProjectConsumptionSource } from "../src/consumption-source.js";
+import { createConsumptionService } from "../src/history-report.js";
 
 describe("ConsumptionService.organizationSummary", () => {
   it("rejects project filters that would make the organization total incomplete", async () => {
@@ -105,6 +103,27 @@ describe("ConsumptionService.organizationSummary", () => {
         ]),
       },
     });
+  });
+
+  it("emits metrics: null when coverage is partial", async () => {
+    // A cursor that never terminates the walk forces partial coverage; an
+    // aggregate total over incomplete data would understate the invoice, so
+    // the summary must withhold authoritative metrics rather than guess.
+    let pages = 0;
+    const source: ProjectConsumptionSource = {
+      getProjectPage: async () => ({
+        projects: [project("project-1", { compute_unit_seconds: "3600" })],
+        nextCursor: `cursor-${pages++}`,
+      }),
+    };
+
+    const summary = await createConsumptionService(source, {
+      now,
+      maxPages: 2,
+    }).organizationSummary({ ...query, metrics: ["compute_unit_seconds"] });
+
+    expect(summary.coverage.status).toBe("partial");
+    expect(summary.metrics).toBeNull();
   });
 
   it("represents a non-terminating conversion as an exact rational", async () => {

@@ -8,7 +8,6 @@
 // account, or capture screenshots with zero real account data on screen.
 
 import { createHash } from "node:crypto";
-import type { ReportDependencies } from "./adapter-support.js";
 import { createCapabilityService } from "./capability-service.js";
 import type { ProjectReportQuery } from "./consumption-query.js";
 import type {
@@ -21,7 +20,8 @@ import type {
 import type { ControlsSource, ProjectQuotaSnapshotReading } from "./controls-service.js";
 import { createControlsService, createQuotaUtilizationService } from "./controls-service.js";
 import { createCurrentSnapshotService } from "./current-snapshot-service.js";
-import { createConsumptionService } from "./history-report.js";
+import { createOrganizationHistoryService } from "./history-report.js";
+import type { InternalReportDependencies } from "./internal-history.js";
 import { estimateProjectCosts } from "./pricing-estimate.js";
 import { neonDocumentationRateCard } from "./rate-card.js";
 import { createUsageOverviewService } from "./usage-overview-service.js";
@@ -190,7 +190,8 @@ function demoPeriods(project: DemoProject, query: ProjectReportQuery): BarePerio
  * for synthetic pages exactly as it does for real ones. */
 function contentEvidence(label: string, payload: unknown): EvidenceRef {
   return {
-    evidenceId: `evidence:demo:${label}`,
+    // Full request labels can exceed the measured contract's identifier bound.
+    evidenceId: `evidence:demo:${createHash("sha256").update(label).digest("hex")}`,
     payloadHash: `sha256:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`,
   };
 }
@@ -338,7 +339,7 @@ export function createDemoDependencies(
       maxBytes?: number;
     };
   } = {},
-): ReportDependencies {
+): InternalReportDependencies {
   const now = options.now ?? (() => new Date());
   const project = (projectId: string): DemoProject => {
     const found = DEMO_PROJECTS.find((candidate) => candidate.id === projectId);
@@ -374,7 +375,7 @@ export function createDemoDependencies(
   };
 
   const serviceOptions = { now, ...options.collectionBudget };
-  const consumption = createConsumptionService(consumptionSource, serviceOptions);
+  const consumption = createOrganizationHistoryService(consumptionSource, serviceOptions);
   const overview = createUsageOverviewService(
     { ...consumptionSource, ...directorySource },
     serviceOptions,
@@ -401,6 +402,8 @@ export function createDemoDependencies(
     projectReport: (query, _control, context) => consumption.projectReport(query, context),
     organizationSummary: (query, _control, context) =>
       consumption.organizationSummary(query, context),
+    organizationHistory: (query, _control, context, metricSelectionMode) =>
+      consumption.organizationHistory(query, context, metricSelectionMode),
     branchReport: async () => {
       throw new Error("branch-report is not available in demo mode");
     },

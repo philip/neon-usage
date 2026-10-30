@@ -1,14 +1,19 @@
 import { Decimal } from "decimal.js";
+import {
+  type KnownMetricName,
+  metricDefinitions,
+  type RawUnit,
+  usageQuantityPattern,
+} from "./metric-definitions.js";
 
-export type RawUnit = "cu_second" | "byte_month" | "byte" | "branch_hour" | "unknown";
-type DerivedUnit = "cu_hour" | "gb_month" | "gb" | "branch_month_before_allowance";
-
-type MetricDefinition = {
-  rawUnit: Exclude<RawUnit, "unknown">;
-  denominator: bigint;
-  derivedUnit: DerivedUnit;
-  branchSupported: boolean;
-};
+export type {
+  HistoryBranchMetricName,
+  HistoryProjectMetricName,
+  KnownMetricName,
+  RawUnit,
+  SnapshotProjectMetricName,
+} from "./metric-definitions.js";
+export { branchConsumptionMetrics, projectConsumptionMetrics } from "./metric-definitions.js";
 
 /** Recursively freeze so a consumer can't mutate process-global billing data. */
 export function deepFreeze<T>(value: T): T {
@@ -19,87 +24,14 @@ export function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export const metricCatalog = deepFreeze({
-  compute_unit_seconds: {
-    rawUnit: "cu_second",
-    denominator: 3600n,
-    derivedUnit: "cu_hour",
-    branchSupported: true,
-  },
-  root_branch_bytes_month: {
-    // Live-reconciled against a real invoice 2026-08-10: v2 *_bytes_month
-    // values arrive already divided by 744 (byte-months, matching the metric
-    // name), so GB-month conversion divides by 1e9 only; a /744/1e9
-    // conversion would double-divide.
-    rawUnit: "byte_month",
-    denominator: 1_000_000_000n,
-    derivedUnit: "gb_month",
-    branchSupported: true,
-  },
-  child_branch_bytes_month: {
-    // Live-reconciled against a real invoice 2026-08-10: v2 *_bytes_month
-    // values arrive already divided by 744 (byte-months, matching the metric
-    // name), so GB-month conversion divides by 1e9 only; a /744/1e9
-    // conversion would double-divide.
-    rawUnit: "byte_month",
-    denominator: 1_000_000_000n,
-    derivedUnit: "gb_month",
-    branchSupported: true,
-  },
-  instant_restore_bytes_month: {
-    // Live-reconciled against a real invoice 2026-08-10: v2 *_bytes_month
-    // values arrive already divided by 744 (byte-months, matching the metric
-    // name), so GB-month conversion divides by 1e9 only; a /744/1e9
-    // conversion would double-divide.
-    rawUnit: "byte_month",
-    denominator: 1_000_000_000n,
-    derivedUnit: "gb_month",
-    branchSupported: true,
-  },
-  snapshot_storage_bytes_month: {
-    // Live-reconciled against a real invoice 2026-08-10: v2 *_bytes_month
-    // values arrive already divided by 744 (byte-months, matching the metric
-    // name), so GB-month conversion divides by 1e9 only; a /744/1e9
-    // conversion would double-divide.
-    rawUnit: "byte_month",
-    denominator: 1_000_000_000n,
-    derivedUnit: "gb_month",
-    branchSupported: false,
-  },
-  public_network_transfer_bytes: {
-    rawUnit: "byte",
-    denominator: 1_000_000_000n,
-    derivedUnit: "gb",
-    branchSupported: true,
-  },
-  private_network_transfer_bytes: {
-    rawUnit: "byte",
-    denominator: 1_000_000_000n,
-    derivedUnit: "gb",
-    branchSupported: true,
-  },
-  extra_branches_month: {
-    rawUnit: "branch_hour",
-    denominator: 744n,
-    derivedUnit: "branch_month_before_allowance",
-    branchSupported: false,
-  },
-} as const satisfies Record<string, MetricDefinition>);
-
-export type KnownMetricName = keyof typeof metricCatalog;
-export const projectConsumptionMetrics = Object.freeze(
-  Object.keys(metricCatalog) as KnownMetricName[],
-);
-export const branchConsumptionMetrics = Object.freeze(
-  projectConsumptionMetrics.filter((name) => metricCatalog[name].branchSupported),
-);
+export const metricCatalog = metricDefinitions;
 // Null prototype so hostile metric names like "constructor" cannot resolve
 // through the prototype chain and defeat unknown-metric detection.
 export const rawUnits: Readonly<Record<string, RawUnit>> = Object.freeze(
   Object.assign(
     Object.create(null) as Record<string, RawUnit>,
     Object.fromEntries(
-      projectConsumptionMetrics.map((name) => [name, metricCatalog[name].rawUnit]),
+      Object.entries(metricDefinitions).map(([name, definition]) => [name, definition.rawUnit]),
     ),
   ),
 );
@@ -109,6 +41,11 @@ const BillingDecimal = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HA
 export function deriveBillingValue(name: string, rawValue: string) {
   if (!Object.hasOwn(metricCatalog, name)) {
     throw new RangeError(`Unknown consumption metric: ${name}`);
+  }
+  if (typeof rawValue !== "string" || !usageQuantityPattern.test(rawValue)) {
+    throw new RangeError(
+      "Usage quantity must be a canonical non-negative integer of at most 128 digits",
+    );
   }
   const definition = metricCatalog[name as KnownMetricName];
   const numerator = BigInt(rawValue);

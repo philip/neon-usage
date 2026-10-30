@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createCapabilityService, type OrganizationSource } from "../src/index.js";
+import { createCapabilityService } from "../src/capability-service.js";
+import type { OrganizationSource } from "../src/consumption-source.js";
 
 describe("CapabilityService.inspect", () => {
   it("detects Free from organization metadata without probing history", async () => {
@@ -55,6 +56,21 @@ describe("CapabilityService.inspect", () => {
     });
   });
 
+  it("can report a paid plan without probing history", async () => {
+    let historyWasProbed = false;
+    const result = await createCapabilityService({
+      getOrganization: async () => ({ id: "org-1", plan: "launch" }),
+      probeProjectHistory: async () => {
+        historyWasProbed = true;
+        return "available";
+      },
+    }).inspect("org-1", undefined, { probeProjectHistory: false });
+
+    expect(historyWasProbed).toBe(false);
+    expect(result.declaredPlan.family).toBe("launch");
+    expect(result.observedAvailability.projectHistory).toBe("not_probed");
+  });
+
   it("detects Scale-only metrics export separately from shared paid capabilities", async () => {
     const source: OrganizationSource = {
       getOrganization: async () => ({ id: "org-1", plan: "scale" }),
@@ -97,7 +113,7 @@ describe("CapabilityService.inspect", () => {
     expect(result.observedAvailability).toEqual({ projectHistory: "available" });
   });
 
-  it("preserves an unrecognized plan as unknown instead of failing", async () => {
+  it("probes an unrecognized plan without guessing its declared capabilities", async () => {
     const source: OrganizationSource = {
       getOrganization: async () => ({ id: "org-1", plan: "future-plan" }),
       probeProjectHistory: async () => "available",
@@ -117,7 +133,20 @@ describe("CapabilityService.inspect", () => {
         projectQuotas: "unknown",
         metricsExport: "unknown",
       },
-      observedAvailability: { projectHistory: "not_probed" },
+      observedAvailability: { projectHistory: "available" },
     });
   });
+
+  it.each(["forbidden", "temporarily_unavailable"] as const)(
+    "preserves %s for custom plans without declaring them unsupported",
+    async (availability) => {
+      const result = await createCapabilityService({
+        getOrganization: async () => ({ id: "org-1", plan: "custom" }),
+        probeProjectHistory: async () => availability,
+      }).inspect("org-1");
+
+      expect(result.capabilities.projectHistory).toBe("unknown");
+      expect(result.observedAvailability.projectHistory).toBe(availability);
+    },
+  );
 });

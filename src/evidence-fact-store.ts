@@ -85,9 +85,12 @@ export type ResourceNameObservation = {
 
 export interface EvidenceFactStore {
   writeEvidence(record: NeonSourceEvidence, signal: AbortSignal): Promise<void>;
-  beginCollectionRun(input: { runId: CollectionRunId; intent: CollectionIntent }): Promise<void>;
-  appendCollectionPage(write: CollectionPageWrite): Promise<AppendReceipt>;
-  recordCollectionRun(record: CollectionRunCompletion): Promise<void>;
+  beginCollectionRun(
+    input: { runId: CollectionRunId; intent: CollectionIntent },
+    signal?: AbortSignal,
+  ): Promise<void>;
+  appendCollectionPage(write: CollectionPageWrite, signal?: AbortSignal): Promise<AppendReceipt>;
+  recordCollectionRun(record: CollectionRunCompletion, signal?: AbortSignal): Promise<void>;
   getEvidence(evidenceId: string): Promise<NeonSourceEvidence | undefined>;
   getFactRevision(observationId: string): Promise<CanonicalConsumptionFact | undefined>;
   getFactRevisions(effectiveFactId: string): Promise<readonly CanonicalConsumptionFact[]>;

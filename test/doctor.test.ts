@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createDoctorReport, type DoctorReport, renderDoctorReport } from "../src/doctor.js";
-import { createSqliteEvidenceFactStore } from "../src/index.js";
 import { diagnoseNeonCliContext } from "../src/neon-cli-context.js";
+import { createSqliteEvidenceFactStore } from "../src/sqlite-fact-store.js";
 import { sqliteModule } from "./support/sqlite-availability.js";
 
 const temporaryDirectories: string[] = [];

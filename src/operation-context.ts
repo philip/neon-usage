@@ -1,6 +1,15 @@
 export type OperationContext = {
   signal?: AbortSignal;
+  /** Operation-wide time budget, distinct from caller cancellation for safe history partials. */
+  deadlineSignal?: AbortSignal;
   maxResponseBytes?: number;
+  maxPages?: number;
+  maxItems?: number;
+  maxDurationMs?: number;
+  /** Shared across snapshot requests and inventory pages before retaining body chunks. */
+  retainedByteBudget?: { remaining: number };
+  /** Shared across project and branch inventory pages before retaining their items. */
+  retainedItemBudget?: { remaining: number };
 };
 
 export class OperationCancelledError extends Error {
@@ -18,6 +27,36 @@ export class OperationByteLimitError extends Error {
 
   constructor() {
     super("The operation response-byte budget was exhausted");
+  }
+}
+
+export class OperationLimitError extends Error {
+  override readonly name = "OperationLimitError";
+
+  constructor(readonly kind: "page_limit" | "item_limit" | "time_limit") {
+    super(`The operation ${kind.replace("_limit", "")} budget was exhausted`);
+  }
+}
+
+/** Detach cancellation even when an injected dependency never settles. */
+export async function raceAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation;
+  if (signal.aborted) {
+    void operation.catch(() => {});
+    throw new OperationCancelledError(signal.reason);
+  }
+  let cancel: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        cancel = () => reject(new OperationCancelledError(signal.reason));
+        if (signal.aborted) cancel();
+        else signal.addEventListener("abort", cancel, { once: true });
+      }),
+    ]);
+  } finally {
+    if (cancel) signal.removeEventListener("abort", cancel);
   }
 }
 

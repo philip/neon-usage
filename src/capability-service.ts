@@ -22,7 +22,11 @@ export type CapabilityReport = {
 };
 
 export interface CapabilityService {
-  inspect(organizationId: string, context?: OperationContext): Promise<CapabilityReport>;
+  inspect(
+    organizationId: string,
+    context?: OperationContext,
+    options?: { probeProjectHistory?: boolean },
+  ): Promise<CapabilityReport>;
 }
 
 type PlanFamily = CapabilityReport["declaredPlan"]["family"];
@@ -112,13 +116,18 @@ function planFamily(rawPlan: string): PlanFamily {
 
 export function createCapabilityService(source: OrganizationSource): CapabilityService {
   return {
-    async inspect(organizationId: string, context?: OperationContext) {
+    async inspect(
+      organizationId: string,
+      context?: OperationContext,
+      options: { probeProjectHistory?: boolean } = {},
+    ) {
       const organization = await source.getOrganization(organizationId, context);
       const family = planFamily(organization.plan);
       const declared = family === "unknown" ? undefined : declaredPlanCapabilities[family];
-      const projectHistory = declared?.probeProjectHistory
-        ? await source.probeProjectHistory(organizationId, context)
-        : ("not_probed" as const);
+      const projectHistory =
+        (options.probeProjectHistory ?? true) && (declared?.probeProjectHistory ?? true)
+          ? await source.probeProjectHistory(organizationId, context)
+          : ("not_probed" as const);
       return {
         organizationId,
         declaredPlan: { raw: organization.plan, family },

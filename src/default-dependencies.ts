@@ -10,29 +10,35 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { CollectionControl } from "./adapter-support.js";
+import { createCapabilityService } from "./capability-service.js";
+import { createControlsService, createQuotaUtilizationService } from "./controls-service.js";
 import {
-  type CollectionControl,
-  createBranchConsumptionService,
-  createCapabilityService,
-  createConsumptionService,
-  createControlsService,
+  type CurrentSnapshotService,
   createCurrentSnapshotService,
-  createInMemoryEvidenceFactStore,
-  createNeonApiSource,
-  createQuotaUtilizationService,
-  createSlidingWindowRequestCoordinator,
-  createSqliteEvidenceFactStore,
-  createUsageOverviewService,
-  DEFAULT_STORE_TAIL_BUCKETS,
-  type EvidenceFactStore,
-  estimateProjectCosts,
-  type HistoryBudget,
+} from "./current-snapshot-service.js";
+import type { EvidenceFactStore } from "./evidence-fact-store.js";
+import type { HistoryBudget } from "./history-collection.js";
+import {
+  createBranchConsumptionService,
+  createConsumptionService,
+  createOrganizationHistoryService,
   mergeProjectConsumptionReports,
-  neonDocumentationRateCard,
   type ProjectConsumptionReport,
-  type ReportDependencies,
+} from "./history-report.js";
+import { createInMemoryEvidenceFactStore } from "./in-memory-fact-store.js";
+import type { InternalReportDependencies } from "./internal-history.js";
+import { createNeonApiSource } from "./neon-api-source.js";
+import { type OperationContext, OperationLimitError, raceAbort } from "./operation-context.js";
+import { estimateProjectCosts } from "./pricing-estimate.js";
+import { neonDocumentationRateCard } from "./rate-card.js";
+import { createSlidingWindowRequestCoordinator } from "./request-coordinator.js";
+import {
+  createSqliteEvidenceFactStore,
   SqliteModuleUnavailableError,
-} from "./index.js";
+} from "./sqlite-fact-store.js";
+import { DEFAULT_STORE_TAIL_BUCKETS } from "./stored-history.js";
+import { createUsageOverviewService } from "./usage-overview-service.js";
 
 /**
  * The default store lives in a per-user data directory, following each OS's
@@ -59,9 +65,9 @@ export function defaultStorePath(env: NodeJS.ProcessEnv): string {
 export type CollectionBudgetConfig = {
   /** Wall-clock ceiling per operation; defaults to 10 minutes. */
   maxDurationMs?: number;
-  /** Entity ceiling per operation; defaults to 10,000. */
+  /** History entity or combined snapshot inventory ceiling; defaults to 10,000. */
   maxItems?: number;
-  /** Fact ceiling per operation; defaults to 1,000,000. */
+  /** History fact ceiling per operation; defaults to 1,000,000. */
   maxFacts?: number;
   /** Response-byte ceiling per operation; defaults to 100 MB. */
   maxBytes?: number;
@@ -72,8 +78,8 @@ export type NeonDependenciesConfig = {
   apiKey: string;
   /** Where the durable store lives; see defaultStorePath. */
   storePath: string;
-  /** Aggregate collection ceilings; a run past one stops and labels the
-   * report partial with the specific limit flag. */
+  /** Aggregate collection ceilings. History retains safe partial pages;
+   * snapshot deadlines or initial inventory limits fail, while later limits label gaps. */
   collectionBudget?: CollectionBudgetConfig;
   /** Resolved organization/project/branch context, if any. */
   context?: { organizationId?: string; projectId?: string; branch?: string };
@@ -111,7 +117,7 @@ export const MAX_REQUEST_BUDGET = 600;
  * that turn them into reports. Serve-from-store, chunked estimation, and
  * observed-name enrichment are wired here once for every adapter.
  */
-export function createNeonDependencies(config: NeonDependenciesConfig): ReportDependencies {
+export function createNeonDependencies(config: NeonDependenciesConfig): InternalReportDependencies {
   const { apiKey, storePath, openedStores } = config;
   const sourceAccount = `credential:sha256:${createHash("sha256").update(apiKey).digest("hex")}`;
 
@@ -236,6 +242,67 @@ export function createNeonDependencies(config: NeonDependenciesConfig): ReportDe
   const controls = createControlsService(readingSource, { maxProjects: 1000 });
   const utilization = createQuotaUtilizationService(readingSource, { maxProjects: 1000 });
   const currentSnapshots = createCurrentSnapshotService(readingSource, { maxProjects: 1000 });
+  const currentExportSnapshots = createCurrentSnapshotService(collectingSource, {
+    maxProjects: 1000,
+  });
+
+  // Report and export share one deadline and retention budget for the entire snapshot walk.
+  const collectSnapshot = async (
+    service: CurrentSnapshotService,
+    organizationId: string,
+    projectIds: string[] | undefined,
+    context?: OperationContext,
+  ) => {
+    const maxDurationMs = Math.min(
+      budgetDefaults.maxDurationMs,
+      context?.maxDurationMs ?? Infinity,
+    );
+    const maxItems = Math.min(budgetDefaults.maxItems, context?.maxItems ?? Infinity);
+    const retainedByteBudget = context?.retainedByteBudget ?? {
+      remaining: budgetDefaults.maxBytes,
+    };
+    retainedByteBudget.remaining = Math.min(retainedByteBudget.remaining, budgetDefaults.maxBytes);
+    const retainedItemBudget = context?.retainedItemBudget ?? { remaining: maxItems };
+    retainedItemBudget.remaining = Math.min(retainedItemBudget.remaining, maxItems);
+    const controller = new AbortController();
+    const startedAt = performance.now();
+    const timer = setTimeout(
+      () => controller.abort(new OperationLimitError("time_limit")),
+      maxDurationMs,
+    );
+    const signal = context?.signal
+      ? AbortSignal.any([context.signal, controller.signal])
+      : controller.signal;
+    try {
+      const report = await raceAbort(
+        service.organizationReport(
+          organizationId,
+          {
+            ...context,
+            signal,
+            maxDurationMs,
+            maxItems,
+            maxResponseBytes: Math.min(
+              budgetDefaults.maxBytes,
+              context?.maxResponseBytes ?? Infinity,
+            ),
+            retainedByteBudget,
+            retainedItemBudget,
+          },
+          projectIds ? { projectIds } : undefined,
+        ),
+        signal,
+      );
+      if (performance.now() - startedAt >= maxDurationMs)
+        throw new OperationLimitError("time_limit");
+      return report;
+    } catch (error) {
+      if (controller.signal.aborted && !context?.signal?.aborted) throw controller.signal.reason;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   return {
     projectReport: (query, control, context) =>
@@ -253,17 +320,20 @@ export function createNeonDependencies(config: NeonDependenciesConfig): ReportDe
         query,
         context,
       ),
+    organizationHistory: (query, control, context, metricSelectionMode) =>
+      createOrganizationHistoryService(
+        collectingSource,
+        collectionOptions(control),
+      ).organizationHistory(query, context, metricSelectionMode),
     capabilities: (organizationId, context) => capabilities.inspect(organizationId, context),
     controls: (organizationId, projectIds, context) =>
       controls.organizationControls(organizationId, projectIds, context),
     quotaUtilization: (organizationId, projectIds, context) =>
       utilization.organizationUtilization(organizationId, projectIds, context),
+    currentExport: (organizationId, projectIds, context) =>
+      collectSnapshot(currentExportSnapshots, organizationId, projectIds, context),
     currentReport: async (organizationId, projectIds, context) => {
-      const report = await currentSnapshots.organizationReport(
-        organizationId,
-        context,
-        projectIds ? { projectIds } : undefined,
-      );
+      const report = await collectSnapshot(currentSnapshots, organizationId, projectIds, context);
       const observedAt = new Date().toISOString();
       recordIfStoreExists(
         report.projects.flatMap((project) =>

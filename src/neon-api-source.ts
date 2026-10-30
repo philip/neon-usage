@@ -20,10 +20,20 @@ import type {
   ProjectRecordSource,
   SpendingNotificationReading,
 } from "./controls-service.js";
-import { markStructuredSourceError, sanitizeErrorText, toSourceErrorDetail } from "./errors.js";
+import {
+  ConsumptionSourceIntegrityError,
+  markStructuredSourceError,
+  sanitizeErrorText,
+  toSourceErrorDetail,
+} from "./errors.js";
 import { historyContracts } from "./history-contracts.js";
 import type { OperationContext } from "./operation-context.js";
-import { OperationByteLimitError } from "./operation-context.js";
+import {
+  OperationByteLimitError,
+  OperationLimitError,
+  raceAbort,
+  throwIfAborted,
+} from "./operation-context.js";
 import type { RequestCoordinator } from "./request-coordinator.js";
 
 const nonNegativeInteger = z
@@ -84,6 +94,7 @@ const organizationsSchema = z.object({
       plan: boundedString(100),
     }),
   ),
+  pagination: z.object({ cursor: boundedString(2000).nullable().optional() }).optional(),
 });
 const projectsSchema = z.object({
   projects: z.array(z.object({ id: neonId, name: boundedString(500) })),
@@ -150,6 +161,7 @@ export type NeonApiSourceOptions = {
   maxRetries?: number;
   sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
+  /** Cumulative transport/retry time; admission waits use the operation cancellation/deadline. */
   requestTimeoutMs?: number;
   maxRetryDelayMs?: number;
   maxResponseBytes?: number;
@@ -199,8 +211,9 @@ export class NeonApiError extends Error {
     readonly attempts?: number,
     readonly retryable = false,
     readonly retryAfterMs?: number,
+    accessToken?: string,
   ) {
-    const details = parseApiError(body);
+    const details = parseApiError(body, accessToken);
     super(`Neon API request failed with HTTP ${status}: ${details.message}`);
     markStructuredSourceError(this);
     if (details.code) this.code = details.code;
@@ -209,17 +222,21 @@ export class NeonApiError extends Error {
   }
 }
 
-function parseApiError(body: string): { code?: string; message: string } {
+function parseApiError(body: string, accessToken?: string): { code?: string; message: string } {
   try {
     const value: unknown = JSON.parse(body);
     if (typeof value === "object" && value !== null && !Array.isArray(value)) {
       const error = value as Record<string, unknown>;
       const code =
-        typeof error.code === "string" && error.code.trim()
+        typeof error.code === "string" &&
+        error.code.trim() &&
+        (!accessToken || !error.code.includes(accessToken))
           ? sanitizeErrorText(error.code, 100)
           : undefined;
       const message =
-        typeof error.message === "string" && error.message.trim()
+        typeof error.message === "string" &&
+        error.message.trim() &&
+        (!accessToken || !error.message.includes(accessToken))
           ? sanitizeErrorText(error.message, 500)
           : "unrecognized error response";
       return { ...(code ? { code } : {}), message };
@@ -230,12 +247,12 @@ function parseApiError(body: string): { code?: string; message: string } {
   return { message: "unrecognized error response" };
 }
 
-function responseRequestId(response: Response): string | undefined {
+function responseRequestId(response: Response, accessToken: string): string | undefined {
   const value =
     response.headers.get("x-neon-ret-request-id") ??
     response.headers.get("x-request-id") ??
     undefined;
-  if (!value) return undefined;
+  if (!value || value.includes(accessToken)) return undefined;
   const bounded = sanitizeErrorText(value, 200);
   return bounded || undefined;
 }
@@ -303,37 +320,42 @@ function sourceContract(path: string): string {
   return "project-details";
 }
 
-function responseCursor(value: unknown): string | null {
-  if (typeof value !== "object" || value === null || !("pagination" in value)) return null;
-  const pagination = value.pagination;
-  if (typeof pagination !== "object" || pagination === null) return null;
-  if ("cursor" in pagination && typeof pagination.cursor === "string") return pagination.cursor;
-  return "next" in pagination && typeof pagination.next === "string" ? pagination.next : null;
-}
-
-async function raceAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) throw signal.reason;
-  let cancel: (() => void) | undefined;
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<never>((_resolve, reject) => {
-        cancel = () => reject(signal.reason);
-        signal.addEventListener("abort", cancel, { once: true });
-      }),
-    ]);
-  } finally {
-    if (cancel) signal.removeEventListener("abort", cancel);
+function responseCursor(path: string, value: unknown, accessToken: string): string | null {
+  const schema =
+    path === projectHistoryContract.endpoint
+      ? responseSchema
+      : path === branchHistoryContract.endpoint
+        ? branchResponseSchema
+        : path === "/users/me/organizations"
+          ? organizationsSchema
+          : path === "/projects"
+            ? projectsSchema
+            : /^\/projects\/[^/]+\/branches$/.test(path)
+              ? branchesSchema
+              : undefined;
+  if (!schema) return null;
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) return null;
+  const pagination = parsed.data.pagination;
+  const cursor =
+    pagination &&
+    ("cursor" in pagination ? pagination.cursor : "next" in pagination ? pagination.next : null);
+  if (cursor?.includes(accessToken)) {
+    throw new NeonResponseError("Neon API returned an unsafe pagination cursor");
   }
+  return cursor ?? null;
 }
 
 async function readResponseBytes(
   response: Response,
   maxResponseBytes: number,
   signal: AbortSignal,
+  onChunk: (bytes: number) => void,
 ): Promise<Uint8Array> {
   const contentLength = response.headers.get("content-length");
   if (contentLength && /^\d+$/.test(contentLength) && Number(contentLength) > maxResponseBytes) {
+    // Cancellation must not delay or replace the response limit error.
+    void response.body?.cancel().catch(() => {});
     throw new NeonResponseTooLargeError(
       `Neon API response exceeds the ${maxResponseBytes}-byte limit`,
     );
@@ -345,17 +367,21 @@ async function readResponseBytes(
   try {
     while (true) {
       if (signal.aborted) throw signal.reason;
-      const { done, value } = await reader.read();
+      const { done, value } = await raceAbort(reader.read(), signal);
       if (done) break;
+      onChunk(value.byteLength);
       total += value.byteLength;
       if (total > maxResponseBytes) {
-        await reader.cancel();
         throw new NeonResponseTooLargeError(
           `Neon API response exceeds the ${maxResponseBytes}-byte limit`,
         );
       }
       chunks.push(value);
     }
+  } catch (error) {
+    // Reader cancellation itself may also be supplied by non-cooperative code.
+    void reader.cancel(signal.reason).catch(() => {});
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -440,26 +466,6 @@ function parseRetryAfter(retryAfter: string | null, now: number): number | undef
   return undefined;
 }
 
-async function waitForRetry(
-  milliseconds: number,
-  signal: AbortSignal,
-  sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>,
-): Promise<void> {
-  if (signal.aborted) throw signal.reason;
-  let cancel: (() => void) | undefined;
-  try {
-    await Promise.race([
-      sleep(milliseconds, signal),
-      new Promise<never>((_resolve, reject) => {
-        cancel = () => reject(signal.reason);
-        signal.addEventListener("abort", cancel, { once: true });
-      }),
-    ]);
-  } finally {
-    if (cancel) signal.removeEventListener("abort", cancel);
-  }
-}
-
 /** A parsed `GET /projects/{id}` response — the shared input for the two readings below. */
 type ProjectRecordResponse = {
   payload: unknown;
@@ -537,6 +543,109 @@ function buildProjectQuotaReading(
     enforcement: "suspend_computes_until_period_end",
     logicalSizeEnforcement: "suspend_affected_branch_persistent",
   };
+}
+
+type InventoryWalk = {
+  requestContext(): OperationContext;
+  countPage(items: number, bytes: number): void;
+  nextCursor(requested: string | null, returned: string | null, items: number): string | null;
+};
+
+async function collectInventory<T>(
+  context: OperationContext | undefined,
+  maxPages: number,
+  label: string,
+  collect: (walk: InventoryWalk) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const deadline =
+    context?.maxDurationMs === undefined ? undefined : performance.now() + context.maxDurationMs;
+  const timer =
+    context?.maxDurationMs === undefined
+      ? undefined
+      : setTimeout(
+          () => controller.abort(new OperationLimitError("time_limit")),
+          context.maxDurationMs,
+        );
+  const signal = context?.signal
+    ? AbortSignal.any([context.signal, controller.signal])
+    : controller.signal;
+  const seenCursors = new Set<string>();
+  let pages = 0;
+  let items = 0;
+  let bytes = 0;
+  const checkDeadline = () => {
+    throwIfAborted(context);
+    if (deadline !== undefined && performance.now() >= deadline) {
+      controller.abort(new OperationLimitError("time_limit"));
+    }
+    if (controller.signal.aborted) throw controller.signal.reason;
+  };
+  try {
+    const result = await collect({
+      requestContext() {
+        checkDeadline();
+        if (pages >= Math.min(maxPages, context?.maxPages ?? maxPages)) {
+          throw new OperationLimitError("page_limit");
+        }
+        if (
+          (context?.maxItems !== undefined && items >= context.maxItems) ||
+          (context?.retainedItemBudget && context.retainedItemBudget.remaining <= 0)
+        ) {
+          throw new OperationLimitError("item_limit");
+        }
+        if (context?.maxResponseBytes !== undefined && bytes >= context.maxResponseBytes) {
+          throw new OperationByteLimitError();
+        }
+        return {
+          signal,
+          ...(context?.retainedByteBudget
+            ? { retainedByteBudget: context.retainedByteBudget }
+            : {}),
+          ...(context?.maxResponseBytes !== undefined
+            ? { maxResponseBytes: context.maxResponseBytes - bytes }
+            : {}),
+        };
+      },
+      countPage(pageItems, pageBytes) {
+        if (
+          (context?.maxItems !== undefined && items + pageItems > context.maxItems) ||
+          (context?.retainedItemBudget && pageItems > context.retainedItemBudget.remaining)
+        ) {
+          throw new OperationLimitError("item_limit");
+        }
+        if (context?.retainedItemBudget) context.retainedItemBudget.remaining -= pageItems;
+        pages += 1;
+        items += pageItems;
+        bytes += pageBytes;
+      },
+      nextCursor(requested, returned, pageItems) {
+        if (pageItems === 0) {
+          // Live-validated Neon termination: an empty page echoes the requested cursor.
+          if (returned === null || returned === requested) return null;
+          throw new ConsumptionSourceIntegrityError(
+            `Neon ${label} list returned an empty page with a continuation cursor`,
+          );
+        }
+        if (returned !== null) {
+          if (seenCursors.has(returned)) {
+            throw new ConsumptionSourceIntegrityError(
+              `Neon ${label} list returned a repeated cursor`,
+            );
+          }
+          seenCursors.add(returned);
+        }
+        return returned;
+      },
+    });
+    checkDeadline();
+    return result;
+  } catch (error) {
+    if (signal.reason instanceof OperationLimitError) throw signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function createNeonApiSource(
@@ -628,14 +737,15 @@ export function createNeonApiSource(
       url.search = searchParams.toString();
     }
     const controller = new AbortController();
-    const deadline = Date.now() + requestTimeoutMs;
+    let remainingTimeoutMs = requestTimeoutMs;
+    let deadline = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     let abortKind: "cancelled" | "timeout" | undefined;
     const abort = (kind: "cancelled" | "timeout", reason?: unknown) => {
       if (controller.signal.aborted) return;
       abortKind = kind;
       controller.abort(reason);
     };
-    const timer = setTimeout(() => abort("timeout"), requestTimeoutMs);
     const cancelOperation = () => abort("cancelled", context?.signal?.reason);
     const cancelShutdown = () => abort("cancelled", options.shutdownSignal?.reason);
     if (context?.signal?.aborted) cancelOperation();
@@ -649,8 +759,27 @@ export function createNeonApiSource(
         throw new NeonTransportError("cancelled", 0, { cause: controller.signal.reason });
       }
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+          remainingTimeoutMs = deadline - performance.now();
+          if (remainingTimeoutMs <= 0) abort("timeout");
+        }
+        if (context?.retainedByteBudget && context.retainedByteBudget.remaining <= 0) {
+          throw new OperationByteLimitError();
+        }
+        if (
+          context?.maxResponseBytes !== undefined &&
+          operationResponseBytes >= context.maxResponseBytes
+        ) {
+          throw new OperationByteLimitError();
+        }
         try {
-          await options.requestCoordinator?.acquire(controller.signal);
+          if (options.requestCoordinator) {
+            await raceAbort(
+              options.requestCoordinator.acquire(controller.signal),
+              controller.signal,
+            );
+          }
         } catch (error) {
           if (controller.signal.aborted) {
             throw new NeonTransportError(abortKind ?? "cancelled", fetchAttempts, {
@@ -664,27 +793,47 @@ export function createNeonApiSource(
             cause: controller.signal.reason,
           });
         }
+        // Admission uses the operation deadline; transport and retry work share this budget.
+        deadline = performance.now() + remainingTimeoutMs;
+        timer = setTimeout(() => abort("timeout"), remainingTimeoutMs);
         let response: Response | undefined;
         try {
           fetchAttempts += 1;
           const requestedAt = (options.evidenceClock?.() ?? new Date()).toISOString();
-          response = await fetch(url, {
-            signal: controller.signal,
-            redirect: "error",
-            headers: {
-              accept: "application/json",
-              authorization: `Bearer ${options.apiKey}`,
-            },
-          });
+          response = await raceAbort(
+            fetch(url, {
+              signal: controller.signal,
+              redirect: "error",
+              headers: {
+                accept: "application/json",
+                authorization: `Bearer ${options.apiKey}`,
+              },
+            }),
+            controller.signal,
+          );
           const effectiveResponseLimit = Math.min(
             maxResponseBytes,
+            context?.retainedByteBudget?.remaining ?? maxResponseBytes,
             context?.maxResponseBytes === undefined
               ? maxResponseBytes
               : Math.max(0, context.maxResponseBytes - operationResponseBytes),
           );
           let bytes: Uint8Array;
           try {
-            bytes = await readResponseBytes(response, effectiveResponseLimit, controller.signal);
+            bytes = await readResponseBytes(
+              response,
+              effectiveResponseLimit,
+              controller.signal,
+              (chunkBytes) => {
+                if (context?.retainedByteBudget) {
+                  if (chunkBytes > context.retainedByteBudget.remaining) {
+                    throw new OperationByteLimitError();
+                  }
+                  context.retainedByteBudget.remaining -= chunkBytes;
+                }
+                operationResponseBytes += chunkBytes;
+              },
+            );
           } catch (error) {
             if (
               error instanceof NeonResponseTooLargeError &&
@@ -694,7 +843,6 @@ export function createNeonApiSource(
             }
             throw error;
           }
-          operationResponseBytes += bytes.byteLength;
           const body = Buffer.from(bytes).toString("utf8");
           const payloadHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
           let parsedBody: unknown;
@@ -703,9 +851,10 @@ export function createNeonApiSource(
           } catch {
             parsedBody = undefined;
           }
+          const cursorOut = response.ok ? responseCursor(path, parsedBody, options.apiKey) : null;
           let evidenceRef: { evidenceId: string; payloadHash: string } | undefined;
           if (options.evidence) {
-            const requestId = responseRequestId(response);
+            const requestId = responseRequestId(response, options.apiKey);
             const canonicalUrl = new URL(url);
             canonicalUrl.searchParams.sort();
             const canonicalRequest = JSON.stringify({
@@ -745,7 +894,7 @@ export function createNeonApiSource(
                     response: {
                       status: response.status,
                       ...(requestId ? { requestId } : {}),
-                      cursorOut: responseCursor(parsedBody),
+                      cursorOut,
                       payloadHash,
                       ...(options.evidence.retention === "body"
                         ? { bodyBase64: Buffer.from(bytes).toString("base64") }
@@ -769,7 +918,7 @@ export function createNeonApiSource(
             if (parsedBody === undefined) {
               throw new NeonResponseError("Neon API returned invalid JSON");
             }
-            const requestId = responseRequestId(response);
+            const requestId = responseRequestId(response, options.apiKey);
             return {
               payload: parsedBody,
               payloadHash,
@@ -788,27 +937,29 @@ export function createNeonApiSource(
           const requestedDelay = parseRetryAfter(response.headers.get("retry-after"), retryClock());
           const delay =
             requestedDelay ?? Math.min(maxRetryDelayMs, Math.floor(250 * 2 ** attempt * random()));
-          if (retryable && attempt < maxRetries && delay < deadline - Date.now()) {
+          if (retryable && attempt < maxRetries && delay < deadline - performance.now()) {
             if (requestedDelay !== undefined && requestedDelay > maxRetryDelayMs) {
               throw new NeonApiError(
                 response.status,
                 body,
-                responseRequestId(response),
+                responseRequestId(response, options.apiKey),
                 fetchAttempts,
                 true,
                 requestedDelay,
+                options.apiKey,
               );
             }
-            await waitForRetry(delay, controller.signal, sleep);
+            await raceAbort(sleep(delay, controller.signal), controller.signal);
             continue;
           }
           throw new NeonApiError(
             response.status,
             body,
-            responseRequestId(response),
+            responseRequestId(response, options.apiKey),
             fetchAttempts,
             retryable,
             requestedDelay,
+            options.apiKey,
           );
         } catch (error) {
           if (controller.signal.aborted) {
@@ -817,7 +968,7 @@ export function createNeonApiSource(
             });
           }
           if (error instanceof NeonResponseError && response) {
-            const requestId = responseRequestId(response);
+            const requestId = responseRequestId(response, options.apiKey);
             error.withMetadata({
               status: response.status,
               ...(requestId ? { requestId } : {}),
@@ -831,11 +982,17 @@ export function createNeonApiSource(
             error instanceof OperationByteLimitError
           )
             throw error;
+          if (
+            context?.maxResponseBytes !== undefined &&
+            operationResponseBytes >= context.maxResponseBytes
+          ) {
+            throw new OperationByteLimitError();
+          }
           if (attempt < maxRetries) {
             const delay = Math.min(maxRetryDelayMs, Math.floor(250 * 2 ** attempt * random()));
-            if (delay < deadline - Date.now()) {
+            if (delay < deadline - performance.now()) {
               try {
-                await waitForRetry(delay, controller.signal, sleep);
+                await raceAbort(sleep(delay, controller.signal), controller.signal);
               } catch (waitError) {
                 throw new NeonTransportError(abortKind ?? "cancelled", fetchAttempts, {
                   cause: waitError,
@@ -959,9 +1116,26 @@ export function createNeonApiSource(
     },
 
     async listOrganizations(context) {
-      const response = await request("/users/me/organizations", undefined, context);
-      return validateResponse(organizationsSchema, response.payload, response.metadata)
-        .organizations;
+      return collectInventory(context, 100, "organization", async (walk) => {
+        const directory: z.infer<typeof organizationsSchema>["organizations"] = [];
+        let cursor: string | null = null;
+        do {
+          const response = await request(
+            "/users/me/organizations",
+            cursor === null ? undefined : new URLSearchParams({ cursor }),
+            walk.requestContext(),
+          );
+          const page = validateResponse(organizationsSchema, response.payload, response.metadata);
+          walk.countPage(page.organizations.length, response.responseBytes);
+          cursor = walk.nextCursor(
+            cursor,
+            page.pagination?.cursor ?? null,
+            page.organizations.length,
+          );
+          directory.push(...page.organizations);
+        } while (cursor !== null);
+        return directory;
+      });
     },
 
     async probeProjectHistory(organizationId, context) {
@@ -985,6 +1159,9 @@ export function createNeonApiSource(
       } catch (error) {
         if (
           error instanceof NeonEvidenceError ||
+          error instanceof NeonResponseTooLargeError ||
+          error instanceof OperationByteLimitError ||
+          error instanceof OperationLimitError ||
           (error instanceof NeonTransportError && error.kind === "cancelled")
         )
           throw error;
@@ -1000,70 +1177,35 @@ export function createNeonApiSource(
 
     async listProjectDirectory(organizationId, context) {
       assertNeonId(organizationId, "organization ID");
-      const projects: Array<{ id: string; name: string }> = [];
-      const unavailableProjectIds: string[] = [];
-      const seenProjectIds = new Set<string>();
-      const seenCursors = new Set<string>();
-      const evidence: EvidenceRef[] = [];
-      let truncated = false;
-      let cursor: string | null = null;
-      let pageCount = 0;
-      do {
-        if (pageCount >= 100) {
-          throw new NeonResponseError("Neon project list exceeded 100 pages");
-        }
-        pageCount += 1;
-        const searchParams = new URLSearchParams({ org_id: organizationId, limit: "400" });
-        if (cursor !== null) {
-          searchParams.set("cursor", cursor);
-        }
-        const response = await request("/projects", searchParams, context);
-        if (response.evidence) evidence.push(response.evidence);
-        const page = validateResponse(projectsSchema, response.payload, response.metadata);
-        // Live-validated 2026-08-09: the Neon /projects endpoint terminates
-        // with an empty page that echoes the cursor just used. An empty page
-        // with a null, echoed, or already-seen cursor is normal completion;
-        // an empty page advancing to a NEW cursor is suspicious and is
-        // surfaced as possible truncation rather than silent completion.
-        if (page.projects.length === 0) {
-          const emptyCursor = page.pagination?.cursor ?? null;
-          if (emptyCursor !== null && emptyCursor !== cursor && !seenCursors.has(emptyCursor)) {
-            truncated = true;
+      return collectInventory(context, 100, "project", async (walk) => {
+        const projects: Array<{ id: string; name: string }> = [];
+        const unavailableProjectIds: string[] = [];
+        const evidence: EvidenceRef[] = [];
+        let cursor: string | null = null;
+        do {
+          const searchParams = new URLSearchParams({ org_id: organizationId, limit: "400" });
+          if (cursor !== null) {
+            searchParams.set("cursor", cursor);
           }
-          break;
-        }
-        const pageAlreadySeen = page.projects.every((project) => seenProjectIds.has(project.id));
-        projects.push(...page.projects);
-        for (const project of page.projects) seenProjectIds.add(project.id);
-        unavailableProjectIds.push(...(page.unavailable_project_ids ?? []));
-        const nextCursor = page.pagination?.cursor ?? null;
-        if (nextCursor !== null) {
-          if (seenCursors.has(nextCursor)) {
-            if (pageAlreadySeen) {
-              // A terminal cursor loop over already-seen projects ends the
-              // walk, but unseen projects may exist behind it.
-              truncated = true;
-              break;
-            }
-            throw new NeonResponseError(
-              "Neon project list returned a repeated cursor",
-              response.metadata,
-            );
-          }
-          seenCursors.add(nextCursor);
-        }
-        cursor = nextCursor;
-      } while (cursor !== null);
-      const uniqueProjects = new Map(projects.map((project) => [project.id, project]));
-      const available = new Set(uniqueProjects.keys());
-      return {
-        projects: [...uniqueProjects.values()],
-        unavailableProjectIds: [...new Set(unavailableProjectIds)].filter(
-          (projectId) => !available.has(projectId),
-        ),
-        ...(truncated ? { qualityFlags: ["CURSOR_REPEATED" as const] } : {}),
-        ...(evidence.length > 0 ? { evidence } : {}),
-      };
+          const response = await request("/projects", searchParams, walk.requestContext());
+          const page = validateResponse(projectsSchema, response.payload, response.metadata);
+          const pageItems = page.projects.length + (page.unavailable_project_ids?.length ?? 0);
+          walk.countPage(pageItems, response.responseBytes);
+          cursor = walk.nextCursor(cursor, page.pagination?.cursor ?? null, pageItems);
+          if (response.evidence) evidence.push(response.evidence);
+          projects.push(...page.projects);
+          unavailableProjectIds.push(...(page.unavailable_project_ids ?? []));
+        } while (cursor !== null);
+        const uniqueProjects = new Map(projects.map((project) => [project.id, project]));
+        const available = new Set(uniqueProjects.keys());
+        return {
+          projects: [...uniqueProjects.values()],
+          unavailableProjectIds: [...new Set(unavailableProjectIds)].filter(
+            (projectId) => !available.has(projectId),
+          ),
+          ...(evidence.length > 0 ? { evidence } : {}),
+        };
+      });
     },
 
     async listProjects(organizationId, context) {
@@ -1117,6 +1259,8 @@ export function createNeonApiSource(
       } catch (error) {
         if (
           error instanceof NeonEvidenceError ||
+          error instanceof OperationByteLimitError ||
+          error instanceof OperationLimitError ||
           (error instanceof NeonTransportError && error.kind === "cancelled")
         ) {
           throw error;
@@ -1139,78 +1283,59 @@ export function createNeonApiSource(
 
     async listBranchSizes(projectId, context) {
       assertNeonId(projectId, "project ID");
-      const branchSizes = [];
-      const evidence: EvidenceRef[] = [];
-      const seenBranchIds = new Set<string>();
-      const seenCursors = new Set<string>();
-      let cursor: string | null = null;
-      let pageCount = 0;
-      do {
-        if (pageCount >= 1000) {
-          throw new NeonResponseError("Neon branch list exceeded 1000 pages");
-        }
-        pageCount += 1;
-        const searchParams = new URLSearchParams({
-          limit: "100",
-          sort_by: "created_at",
-          sort_order: "asc",
-        });
-        if (cursor !== null) {
-          searchParams.set("cursor", cursor);
-        }
-        const response = await request(
-          `/projects/${encodeURIComponent(projectId)}/branches`,
-          searchParams,
-          context,
-        );
-        const page = validateResponse(branchesSchema, response.payload, response.metadata);
-        if (response.evidence) evidence.push(response.evidence);
-        for (const [branchIndex, branch] of page.branches.entries()) {
-          if (seenBranchIds.has(branch.id)) {
-            throw new NeonResponseError(
-              `Neon branch list repeated branch ${branch.id}`,
-              response.metadata,
-            );
-          }
-          seenBranchIds.add(branch.id);
-          // Live-validated 2026-08-09: Neon omits logical_size for branches
-          // whose size has not been computed; report the absence explicitly.
-          branchSizes.push({
-            branchId: branch.id,
-            ...(branch.name !== undefined ? { name: branch.name } : {}),
-            logicalSizeBytes: branch.logical_size ?? null,
-            evidence: {
-              payloadHash: response.payloadHash,
-              ...(response.evidence ? { evidenceId: response.evidence.evidenceId } : {}),
-              sourcePath:
-                branch.logical_size === undefined
-                  ? `/branches/${branchIndex}`
-                  : `/branches/${branchIndex}/logical_size`,
-            },
+      return collectInventory(context, 1000, "branch", async (walk) => {
+        const branchSizes = [];
+        const evidence: EvidenceRef[] = [];
+        const seenBranchIds = new Set<string>();
+        let cursor: string | null = null;
+        do {
+          const searchParams = new URLSearchParams({
+            limit: "100",
+            sort_by: "created_at",
+            sort_order: "asc",
           });
-        }
-        const nextCursor = page.pagination?.next ?? null;
-        if (page.branches.length === 0 && nextCursor !== null) {
-          throw new NeonResponseError(
-            "Neon branch list returned an empty page with a continuation cursor",
-            response.metadata,
-          );
-        }
-        if (nextCursor !== null) {
-          if (seenCursors.has(nextCursor)) {
-            throw new NeonResponseError(
-              "Neon branch list returned a repeated cursor",
-              response.metadata,
-            );
+          if (cursor !== null) {
+            searchParams.set("cursor", cursor);
           }
-          seenCursors.add(nextCursor);
-        }
-        cursor = nextCursor;
-      } while (cursor !== null);
-      return {
-        branches: branchSizes,
-        ...(evidence.length > 0 ? { evidence } : {}),
-      };
+          const response = await request(
+            `/projects/${encodeURIComponent(projectId)}/branches`,
+            searchParams,
+            walk.requestContext(),
+          );
+          const page = validateResponse(branchesSchema, response.payload, response.metadata);
+          walk.countPage(page.branches.length, response.responseBytes);
+          cursor = walk.nextCursor(cursor, page.pagination?.next ?? null, page.branches.length);
+          if (response.evidence) evidence.push(response.evidence);
+          for (const [branchIndex, branch] of page.branches.entries()) {
+            if (seenBranchIds.has(branch.id)) {
+              throw new NeonResponseError(
+                `Neon branch list repeated branch ${branch.id}`,
+                response.metadata,
+              );
+            }
+            seenBranchIds.add(branch.id);
+            // Live-validated 2026-08-09: Neon omits logical_size for branches
+            // whose size has not been computed; report the absence explicitly.
+            branchSizes.push({
+              branchId: branch.id,
+              ...(branch.name !== undefined ? { name: branch.name } : {}),
+              logicalSizeBytes: branch.logical_size ?? null,
+              evidence: {
+                payloadHash: response.payloadHash,
+                ...(response.evidence ? { evidenceId: response.evidence.evidenceId } : {}),
+                sourcePath:
+                  branch.logical_size === undefined
+                    ? `/branches/${branchIndex}`
+                    : `/branches/${branchIndex}/logical_size`,
+              },
+            });
+          }
+        } while (cursor !== null);
+        return {
+          branches: branchSizes,
+          ...(evidence.length > 0 ? { evidence } : {}),
+        };
+      });
     },
   };
 

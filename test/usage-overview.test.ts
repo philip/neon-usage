@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  createUsageOverviewService,
-  type OrganizationDirectorySource,
-  type ProjectConsumptionSource,
-} from "../src/index.js";
+import type {
+  OrganizationDirectorySource,
+  ProjectConsumptionSource,
+} from "../src/consumption-source.js";
+import { createUsageOverviewService } from "../src/usage-overview-service.js";
 
 describe("UsageOverviewService", () => {
   it("enriches and filters projects while retaining exact organization totals", async () => {

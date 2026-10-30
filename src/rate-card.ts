@@ -64,6 +64,15 @@ const paidPublicTransferAllowance: RateCardAllowance = {
   sourceUrl: `${usageCalculations}#public-transfer-allowance`,
 };
 
+// The Agent plan includes 100 GB per project (not the 500 GB Scale allowance),
+// then $0.10/GB. See https://neon.com/docs/introduction/agent-plan#pricing.
+const agentPublicTransferAllowance: RateCardAllowance = {
+  metric: "public_network_transfer_bytes",
+  scope: "per_project",
+  rawQuantityPerBillingPeriod: "100000000000",
+  sourceUrl: `${agentPlan}#pricing`,
+};
+
 /**
  * Neon's published self-service rates as read from public documentation on
  * 2026-08-08. Documentation
@@ -135,10 +144,11 @@ const documentationRateCard: RateCard = {
       planFamily: "agent",
       billing: "metered",
       ratesAssumed: true,
-      // Best-effort per Neon's usage docs: Agent matches Scale except compute,
-      // which is billed at the Launch rate. Snapshot/transfer/extra-branch rates
+      // Best-effort per Neon's usage docs: Agent matches Scale except compute
+      // (billed at the Launch rate) and the public-transfer allowance (100 GB
+      // per project, not Scale's 500 GB). Snapshot/transfer/extra-branch rates
       // are assumed equal to Scale; a customer's terms may differ. See
-      // https://neon.com/docs/introduction/usage-calculations
+      // https://neon.com/docs/introduction/agent-plan#pricing
       ratesPerDerivedUnit: {
         compute_unit_seconds: "0.106",
         root_branch_bytes_month: "0.35",
@@ -149,7 +159,7 @@ const documentationRateCard: RateCard = {
         private_network_transfer_bytes: "0.01",
         extra_branches_month: "1.50",
       },
-      allowances: [paidPublicTransferAllowance],
+      allowances: [agentPublicTransferAllowance],
       includedChildBranchesPerProject: 24,
     },
     {

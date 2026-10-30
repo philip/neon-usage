@@ -1,7 +1,9 @@
 import { Decimal } from "decimal.js";
+import { NeonUsageError } from "./client-errors.js";
 import type { EffectiveRange, ProjectReportQuery } from "./consumption-query.js";
 import type { EvidenceRef } from "./consumption-source.js";
 import type { ProjectConsumptionReport } from "./history-report.js";
+import { measuredUsageLimits } from "./measured-usage-contract.js";
 import { type KnownMetricName, metricCatalog } from "./metric-catalog.js";
 import type { RateCard, RateCardPlan } from "./rate-card.js";
 
@@ -197,6 +199,8 @@ function planEntry(rateCard: RateCard, periodPlan: string): RateCardPlan | undef
  * against it, the billable quantity, the rate, and the exact amount as a
  * fraction. Unknown plans and unpublished rates become unavailable lines,
  * never guesses; the Free plan is not billed and estimates to zero.
+ * Branch pricing fails with COLLECTION_LIMIT_REACHED before exceeding the
+ * measured contract's identity/component ceiling; accepted totals stay whole.
  */
 export function estimateProjectCosts(
   report: ProjectConsumptionReport,
@@ -262,13 +266,14 @@ export function estimateProjectCosts(
     allowanceWindow: { start: string; end: string };
     totals: Map<string, bigint>;
     /** Extra-branch usage after netting the included-branch allowance PER
-     * BUCKET (Neon's documented rule), in MILLI-branch-hours so a partial
+     * BUCKET (Neon's documented rule), as an exact fraction so a partial
      * bucket (a plan-change cell split) nets its exact fractional allowance —
      * flooring to whole hours would bill a half-hour bucket's usage in full.
      * Undefined when the plan publishes no allowance. */
     extraBranchesBillable?: Fraction;
   };
   const usages: PeriodUsage[] = [];
+  const includesBranchComponents = report.query.metrics.includes("extra_branches_month");
   for (const project of report.projects) {
     for (const period of project.periods) {
       const periodPlan = planEntry(rateCard, period.plan);
@@ -315,6 +320,9 @@ export function estimateProjectCosts(
         }
       }
       for (const monthly of byMonth.values()) {
+        // Each branch usage becomes one exported identity; fail before generating excess lines.
+        if (includesBranchComponents && usages.length >= measuredUsageLimits.collectionEntries)
+          throw new NeonUsageError("COLLECTION_LIMIT_REACHED");
         usages.push({
           projectId: project.projectId,
           period: {

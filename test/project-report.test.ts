@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { ProjectReportQuery } from "../src/consumption-query.js";
+import type {
+  ProjectConsumptionPage,
+  ProjectConsumptionSource,
+} from "../src/consumption-source.js";
+import { createConsumptionService } from "../src/history-report.js";
 import { createInMemoryEvidenceFactStore } from "../src/in-memory-fact-store.js";
-import {
-  createConsumptionService,
-  type ProjectConsumptionPage,
-  type ProjectConsumptionSource,
-  type ProjectReportQuery,
-} from "../src/index.js";
 import { NeonApiError } from "../src/neon-api-source.js";
 
 describe("ConsumptionService.projectReport", () => {
@@ -877,14 +877,17 @@ describe("ConsumptionService.projectReport", () => {
   it("resumes a cancelled run and returns prior and continued projects", async () => {
     const store = createInMemoryEvidenceFactStore();
     const controller = new AbortController();
+    const appendPage = store.appendCollectionPage.bind(store);
+    store.appendCollectionPage = async (write, signal) => {
+      const receipt = await appendPage(write, signal);
+      controller.abort("interrupted after page commit");
+      return receipt;
+    };
     const interrupted: ProjectConsumptionSource = {
-      getProjectPage: async () => {
-        controller.abort("interrupted");
-        return {
-          projects: [{ projectId: "project-1", periods: [] }],
-          nextCursor: "next",
-        };
-      },
+      getProjectPage: async () => ({
+        projects: [{ projectId: "project-1", periods: [] }],
+        nextCursor: "next",
+      }),
     };
     await expect(
       createConsumptionService(interrupted, {
@@ -926,16 +929,19 @@ describe("ConsumptionService.projectReport", () => {
   it("resumes a committed terminal project page without calling the source", async () => {
     const store = createInMemoryEvidenceFactStore();
     const controller = new AbortController();
+    const appendPage = store.appendCollectionPage.bind(store);
+    store.appendCollectionPage = async (write, signal) => {
+      const receipt = await appendPage(write, signal);
+      controller.abort("interrupted after terminal page commit");
+      return receipt;
+    };
     await expect(
       createConsumptionService(
         {
-          getProjectPage: async () => {
-            controller.abort("interrupted after response");
-            return {
-              projects: [{ projectId: "project-1", periods: [] }],
-              nextCursor: null,
-            };
-          },
+          getProjectPage: async () => ({
+            projects: [{ projectId: "project-1", periods: [] }],
+            nextCursor: null,
+          }),
         },
         {
           now: () => new Date("2026-08-08T12:30:00Z"),
@@ -946,6 +952,10 @@ describe("ConsumptionService.projectReport", () => {
       ).projectReport(baseQuery, { signal: controller.signal }),
     ).rejects.toMatchObject({ kind: "cancelled" });
 
+    expect(await store.getCollectionRun("run_terminal-project")).toMatchObject({
+      status: "running",
+      pageCount: 1,
+    });
     const report = await createConsumptionService(
       {
         getProjectPage: async () => {

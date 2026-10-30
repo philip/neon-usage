@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  commaSeparatedValues,
   historyQueryFromOptions,
   memoizeReports,
   serializeCollections,
   withPlanHint,
-} from "../src/index.js";
+} from "../src/adapter-support.js";
 
 describe("historyQueryFromOptions --month", () => {
   const now = new Date("2026-08-11T09:00:00Z");
@@ -392,4 +393,15 @@ describe("memoizeReports fresh and TTL semantics", () => {
     // The pending entry survived expiry: no duplicate collection started.
     expect(calls).toBe(1);
   });
+});
+
+describe("commaSeparatedValues", () => {
+  it("trims each entry", () => {
+    expect(commaSeparatedValues(" first , second ")).toEqual(["first", "second"]);
+  });
+
+  it.each(["", " ", ",first", "first,", "first,,second", "first,first", "first, first "])(
+    "rejects empty or duplicate entries in %j",
+    (input) => expect(() => commaSeparatedValues(input)).toThrow(/empty|duplicate/),
+  );
 });

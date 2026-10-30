@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import { NeonUsageError } from "./client-errors.js";
 import type {
   BranchSizeSnapshot,
   CurrentSnapshotSource,
@@ -10,9 +11,28 @@ import {
   type SourceErrorDetail,
   toSourceErrorDetail,
 } from "./errors.js";
+import { NeonResponseTooLargeError } from "./neon-api-source.js";
 import type { OperationContext } from "./operation-context.js";
-import { isCancellationFailure, throwIfAborted } from "./operation-context.js";
+import {
+  isCancellationFailure,
+  OperationByteLimitError,
+  OperationLimitError,
+  raceAbort,
+  throwIfAborted,
+} from "./operation-context.js";
 import { canonicalEvidenceReferences, isIntegrityFailure } from "./report-support.js";
+
+function snapshotErrorDetail(error: unknown): SourceErrorDetail {
+  if (
+    error instanceof OperationLimitError ||
+    error instanceof OperationByteLimitError ||
+    error instanceof NeonResponseTooLargeError
+  ) {
+    const sanitized = new NeonUsageError("COLLECTION_LIMIT_REACHED");
+    return { code: sanitized.code, message: sanitized.message };
+  }
+  return toSourceErrorDetail(error);
+}
 
 export type CurrentSnapshotError = {
   /** Null for organization-level inventory failures that no single project owns. */
@@ -28,6 +48,8 @@ export type CurrentPeriodSnapshotReport = {
   historical: false;
   generatedAt: string;
   organizationId: string;
+  /** Sorted, duplicate-free scope, including projects whose collection failed. */
+  requestedProjectIds: string[];
   coverage: {
     status: "complete" | "partial";
     projectsRequested: number;
@@ -95,6 +117,9 @@ export function createCurrentSnapshotService(
       scope?: { projectIds?: string[] },
     ) {
       throwIfAborted(context);
+      if (context?.maxItems !== undefined && !context.retainedItemBudget) {
+        context = { ...context, retainedItemBudget: { remaining: context.maxItems } };
+      }
       const requested = scope?.projectIds ? [...new Set(scope.projectIds)] : null;
       if (requested && requested.length === 0) {
         throw new Error("Current snapshot projectIds scope must name at least one project");
@@ -108,13 +133,14 @@ export function createCurrentSnapshotService(
       const unavailableProjectIds = requestedSet
         ? inventory.unavailableProjectIds.filter((projectId) => requestedSet.has(projectId))
         : inventory.unavailableProjectIds;
-      const projectsKnown = requested
-        ? requested.length
-        : inventory.projectIds.length + inventory.unavailableProjectIds.length;
+      const requestedProjectIds = [
+        ...new Set(requested ?? [...walkProjectIds, ...unavailableProjectIds]),
+      ].sort();
+      const projectsKnown = requestedProjectIds.length;
       if (projectsKnown > maxProjects) {
-        throw new Error(
-          `Current snapshot report found ${projectsKnown} projects; maximum is ${maxProjects}`,
-        );
+        const error = new OperationLimitError("item_limit");
+        error.message = `Current snapshot report found ${projectsKnown} projects; maximum is ${maxProjects}`;
+        throw error;
       }
       const errors: CurrentSnapshotError[] = unavailableProjectIds.map((projectId) => ({
         projectId,
@@ -153,22 +179,33 @@ export function createCurrentSnapshotService(
           },
         });
       }
-      const projectResults = await Promise.all(
-        walkProjectIds.map((projectId) =>
-          limit(async () => {
-            throwIfAborted(context);
+      const fanoutController = new AbortController();
+      const fanoutContext = {
+        ...context,
+        signal: context?.signal
+          ? AbortSignal.any([context.signal, fanoutController.signal])
+          : fanoutController.signal,
+      };
+      let failure: { error: unknown } | undefined;
+      const tasks = walkProjectIds.map((projectId) =>
+        limit(async () => {
+          try {
+            throwIfAborted(fanoutContext);
             let snapshot: ProjectCurrentSnapshot;
             try {
-              snapshot = await source.getProjectSnapshot(projectId, context);
+              snapshot = await raceAbort(
+                source.getProjectSnapshot(projectId, fanoutContext),
+                fanoutContext.signal,
+              );
               if (snapshot.projectId !== projectId) {
                 throw new ConsumptionSourceIntegrityError(
                   `Project snapshot returned ${snapshot.projectId} for requested project ${projectId}`,
                 );
               }
             } catch (error) {
-              throwIfAborted(context);
+              throwIfAborted(fanoutContext);
               if (isIntegrityFailure(error) || isCancellationFailure(error)) throw error;
-              const detail = toSourceErrorDetail(error);
+              const detail = snapshotErrorDetail(error);
               errors.push({
                 projectId,
                 source: "project_snapshot",
@@ -186,8 +223,11 @@ export function createCurrentSnapshotService(
                 }
               | { status: "unavailable"; totalLogicalSizeBytes: null; branches: [] };
             try {
-              throwIfAborted(context);
-              const branchCollection = await source.listBranchSizes(projectId, context);
+              throwIfAborted(fanoutContext);
+              const branchCollection = await raceAbort(
+                source.listBranchSizes(projectId, fanoutContext),
+                fanoutContext.signal,
+              );
               const branches = branchCollection.branches;
               // A total over partially unknown sizes would understate storage;
               // it is only available when every branch reports a size.
@@ -203,9 +243,9 @@ export function createCurrentSnapshotService(
                 ...(branchCollection.evidence ? { evidence: branchCollection.evidence } : {}),
               };
             } catch (error) {
-              throwIfAborted(context);
+              throwIfAborted(fanoutContext);
               if (isIntegrityFailure(error) || isCancellationFailure(error)) throw error;
-              const detail = toSourceErrorDetail(error);
+              const detail = snapshotErrorDetail(error);
               errors.push({
                 projectId,
                 source: "branch_sizes",
@@ -229,9 +269,17 @@ export function createCurrentSnapshotService(
               metricEvidence: snapshot.metricEvidence,
               branchStorage,
             };
-          }),
-        ),
+          } catch (error) {
+            failure ??= { error };
+            fanoutController.abort(error);
+            throw error;
+          }
+        }),
       );
+      const projectResults = await Promise.all(tasks).catch(async (error: unknown) => {
+        await Promise.allSettled(tasks);
+        throw failure ? failure.error : error;
+      });
       const projects = projectResults.filter((project) => project !== null);
       const orderedProjectIds = [
         ...new Set([...walkProjectIds, ...unavailableProjectIds, ...(requested ?? [])]),
@@ -276,6 +324,7 @@ export function createCurrentSnapshotService(
         historical: false as const,
         generatedAt: (options.now?.() ?? new Date()).toISOString(),
         organizationId,
+        requestedProjectIds,
         coverage: {
           status: errors.length === 0 ? ("complete" as const) : ("partial" as const),
           projectsRequested: projectsKnown,

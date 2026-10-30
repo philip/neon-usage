@@ -1,6 +1,6 @@
 {
   "name": "neon-usage",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "workspaces": [
     "dashboard"
@@ -11,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "default": "./dist/contracts.js"
     }
   },
   "files": [
@@ -27,8 +31,8 @@
     "neon-usage": "dist/bin.js"
   },
   "scripts": {
-    "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('fs').chmodSync('dist/bin.js',0o755)\" && npm --prefix dashboard run build",
-    "check": "npm run typecheck && npm run typecheck:dashboard && npm run lint && npm test",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/write-package-version.ts && npm --prefix dashboard run build",
+    "check": "npm run typecheck && npm run typecheck:dashboard && npm run lint && npm run test:source",
     "dev": "tsx src/bin.ts",
     "dev:dashboard": "tsx scripts/dev-dashboard.ts",
     "preview:dashboard": "npm --prefix dashboard run build && npm run dev -- dashboard",
@@ -40,10 +44,14 @@
     "typecheck:dashboard": "npm --workspace dashboard run typecheck",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepack": "npm run build",
-    "prepublishOnly": "npm run check"
+    "prepublishOnly": "node scripts/reject-direct-publish.ts",
+    "test:source": "vitest run --exclude test/public-package.test.ts",
+    "test:package": "node scripts/verify-readme-examples.ts && vitest run test/public-package.test.ts",
+    "verify:package": "node scripts/verify-package.ts",
+    "release:publish": "node scripts/release-publish.ts"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

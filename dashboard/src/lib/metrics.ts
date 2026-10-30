@@ -1,44 +1,16 @@
-// Display names, units, and raw-to-display conversion for the v2 metric
-// family. Divisors mirror src/metric-catalog.ts (the byte-month live
-// reconciliation included); the page only approximates for plotting — exact
-// values stay in the JSON reports.
+import { METRICS, type MetricInfo } from "../../../src/metric-presentation.js";
 
-export type MetricInfo = { label: string; unit: string; divisor: number };
-
-export const METRICS: Record<string, MetricInfo> = {
-  compute_unit_seconds: { label: "Compute", unit: "CU-hrs", divisor: 3600 },
-  root_branch_bytes_month: { label: "Root storage", unit: "GB-mo", divisor: 1e9 },
-  child_branch_bytes_month: { label: "Branch storage", unit: "GB-mo", divisor: 1e9 },
-  instant_restore_bytes_month: { label: "Instant restore", unit: "GB-mo", divisor: 1e9 },
-  snapshot_storage_bytes_month: { label: "Snapshots", unit: "GB-mo", divisor: 1e9 },
-  public_network_transfer_bytes: { label: "Public transfer", unit: "GB", divisor: 1e9 },
-  private_network_transfer_bytes: { label: "Private transfer", unit: "GB", divisor: 1e9 },
-  extra_branches_month: { label: "Extra branches", unit: "branch-mo", divisor: 744 },
-};
-
-export const CHART_GROUPS = [
-  {
-    id: "storage",
-    title: "Storage",
-    unit: "GB-mo",
-    metrics: [
-      "root_branch_bytes_month",
-      "child_branch_bytes_month",
-      "instant_restore_bytes_month",
-      "snapshot_storage_bytes_month",
-    ],
-  },
-  { id: "compute", title: "Compute", unit: "CU-hrs", metrics: ["compute_unit_seconds"] },
-  {
-    id: "transfer",
-    title: "Network transfer",
-    unit: "GB",
-    metrics: ["public_network_transfer_bytes", "private_network_transfer_bytes"],
-  },
-] as const;
+export type { MetricInfo } from "../../../src/metric-presentation.js";
+export { CHART_GROUPS, METRICS } from "../../../src/metric-presentation.js";
 
 export function metricInfo(name: string): MetricInfo {
-  return METRICS[name] ?? { label: name, unit: "", divisor: 1 };
+  return (
+    (Object.hasOwn(METRICS, name) ? METRICS[name] : undefined) ?? {
+      label: name,
+      unit: "",
+      divisor: 1,
+    }
+  );
 }
 
 const NUMBER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });

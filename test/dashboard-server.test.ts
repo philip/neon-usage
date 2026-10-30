@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
+import type { ReportDependencies } from "../src/adapter-support.js";
 import { runCli } from "../src/cli.js";
+import { ConsumptionQueryError } from "../src/consumption-query.js";
 import {
   createDashboardApp,
   dashboardApiRoutes,
   startDashboardServer,
 } from "../src/dashboard-server.js";
-import { ConsumptionQueryError, NeonApiError, type ReportDependencies } from "../src/index.js";
+import { NeonApiError } from "../src/neon-api-source.js";
 
 // One clock for both adapters so default ranges resolve identically.
 const now = new Date("2026-08-10T12:34:56Z");

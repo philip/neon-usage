@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mergeProjectConsumptionReports, type ProjectConsumptionReport } from "../src/index.js";
+import {
+  mergeProjectConsumptionReports,
+  type ProjectConsumptionReport,
+} from "../src/history-report.js";
 
 function chunk(
   projectIds: string[],

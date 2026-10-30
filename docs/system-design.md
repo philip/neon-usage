@@ -6,7 +6,8 @@
 > features, and the broader command surface in the examples below, are design
 > vision, much of it unbuilt (see the roadmap in [`DEVELOPMENT.md`](../DEVELOPMENT.md) for what is parked).
 > For what actually ships and how it works today, see [`README.md`](../README.md)
-> and [`how-it-works.md`](./how-it-works.md).
+> and [`how-it-works.md`](./how-it-works.md). The supported SDK imports and
+> export dispositions are in the [public package migration guide](./public-package-migration.md).
 
 Status: proposed architecture and delivery plan
 Research date: **2026-08-08**

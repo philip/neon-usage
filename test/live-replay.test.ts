@@ -1,11 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import {
-  createConsumptionService,
-  createCurrentSnapshotService,
-  createNeonApiSource,
-  serializeMachineJson,
-} from "../src/index.js";
+import { createCurrentSnapshotService } from "../src/current-snapshot-service.js";
+import { createConsumptionService } from "../src/history-report.js";
+import { serializeMachineJson } from "../src/machine-json.js";
+import { createNeonApiSource } from "../src/neon-api-source.js";
 
 // Sanitized captures of real Neon API responses (2026-08-09) for one Free,
 // one Launch, and one Scale organization. These lock the machine-JSON bytes

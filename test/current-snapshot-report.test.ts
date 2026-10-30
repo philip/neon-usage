@@ -1,8 +1,111 @@
 import { describe, expect, it } from "vitest";
-import { type CurrentSnapshotSource, createCurrentSnapshotService } from "../src/index.js";
-import { NeonApiError } from "../src/neon-api-source.js";
+import type { CurrentSnapshotSource } from "../src/consumption-source.js";
+import { createCurrentSnapshotService } from "../src/current-snapshot-service.js";
+import { ConsumptionSourceIntegrityError } from "../src/errors.js";
+import { measuredSnapshotErrors } from "../src/measured-snapshot-errors.js";
+import { NeonApiError, NeonResponseTooLargeError } from "../src/neon-api-source.js";
+import { OperationByteLimitError, OperationLimitError } from "../src/operation-context.js";
 
 describe("CurrentSnapshotService.organizationReport", () => {
+  it.each(
+    [
+      new OperationLimitError("item_limit"),
+      new OperationByteLimitError(),
+      new OperationLimitError("time_limit"),
+      new NeonResponseTooLargeError("secret provider text", {
+        status: 200,
+        requestId: "secret-provider-request",
+        attempts: 1,
+      }),
+    ].flatMap((failure) =>
+      (["project_snapshot", "branch_sizes"] as const).map((source) => ({ failure, source })),
+    ),
+  )("preserves a sanitized local snapshot limit diagnostic: %j", async ({ failure, source }) => {
+    failure.message = "secret provider text";
+    const report = await createCurrentSnapshotService({
+      listProjects: async () => ({ projectIds: ["project-1"], unavailableProjectIds: [] }),
+      getProjectSnapshot: async () => {
+        if (source === "project_snapshot") throw failure;
+        return {
+          projectId: "project-1",
+          periodStart: "2026-08-01T00:00:00Z",
+          periodEnd: "2026-09-01T00:00:00Z",
+          activeTimeSeconds: "0",
+          computeTimeSeconds: "0",
+          writtenDataBytes: "0",
+          dataTransferBytes: "0",
+          dataStorageByteHours: "0",
+          metricEvidence,
+        };
+      },
+      listBranchSizes: async () => {
+        throw failure;
+      },
+    }).organizationReport("org-1");
+    expect(measuredSnapshotErrors(report.coverage.errors)).toEqual([
+      {
+        projectId: "project-1",
+        source,
+        message: "The operation reached a collection limit.",
+        detail: {
+          code: "COLLECTION_LIMIT_REACHED",
+          message: "The operation reached a collection limit.",
+        },
+      },
+    ]);
+  });
+
+  it("does not classify a provider-shaped plain object as a package-owned limit", async () => {
+    const report = await createCurrentSnapshotService({
+      listProjects: async () => ({ projectIds: ["project-1"], unavailableProjectIds: [] }),
+      getProjectSnapshot: async () => {
+        throw {
+          name: "OperationLimitError",
+          kind: "item_limit",
+          code: "COLLECTION_LIMIT_REACHED",
+          message: "secret provider text",
+        };
+      },
+      listBranchSizes: async () => ({ branches: [] }),
+    }).organizationReport("org-1");
+    const errors = measuredSnapshotErrors(report.coverage.errors);
+    expect(errors[0]?.detail?.code).toBe("PROVIDER_UNAVAILABLE");
+    expect(JSON.stringify(errors)).not.toContain("secret");
+  });
+
+  it("preserves the original fatal error while draining a noncooperative source and its queue", async () => {
+    const fatal = new ConsumptionSourceIntegrityError("fatal evidence mismatch");
+    let startSibling!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startSibling = resolve;
+    });
+    const requests: string[] = [];
+    let siblingSignal: AbortSignal | undefined;
+    const source: CurrentSnapshotSource = {
+      listProjects: async () => ({
+        projectIds: ["project-a", "project-b", "project-c"],
+        unavailableProjectIds: [],
+      }),
+      getProjectSnapshot: async (projectId, context) => {
+        requests.push(projectId);
+        if (projectId === "project-a") {
+          await started;
+          throw fatal;
+        }
+        siblingSignal = context?.signal;
+        startSibling();
+        return new Promise(() => {});
+      },
+      listBranchSizes: async () => {
+        throw new Error("Branch work escaped fatal fan-out");
+      },
+    };
+    await expect(
+      createCurrentSnapshotService(source, { concurrency: 2 }).organizationReport("org-1"),
+    ).rejects.toBe(fatal);
+    expect(siblingSignal?.aborted).toBe(true);
+    expect(requests).toEqual(["project-a", "project-b"]);
+  });
   it.each([
     [{ concurrency: 0 }, "concurrency must be an integer between 1 and 100"],
     [{ maxProjects: Number.NaN }, "maxProjects must be an integer between 1 and 10000"],
@@ -51,6 +154,7 @@ describe("CurrentSnapshotService.organizationReport", () => {
       historical: false,
       generatedAt: "2026-08-08T12:30:00.000Z",
       organizationId: "org-1",
+      requestedProjectIds: ["project-1"],
       coverage: { status: "complete", projectsRequested: 1, projectsReturned: 1, errors: [] },
       projects: [
         {
@@ -264,6 +368,7 @@ describe("CurrentSnapshotService.organizationReport", () => {
     const report = await createCurrentSnapshotService(source).organizationReport("org-1");
 
     expect(report.projects.map((project) => project.projectId)).toEqual(["project-1"]);
+    expect(report.requestedProjectIds).toEqual(["project-1", "project-2"]);
     expect(report.coverage).toEqual({
       status: "partial",
       projectsRequested: 2,
@@ -308,6 +413,7 @@ describe("CurrentSnapshotService.organizationReport", () => {
 
     const report = await createCurrentSnapshotService(source).organizationReport("org-1");
 
+    expect(report.requestedProjectIds).toEqual(["project-1", "project-2"]);
     expect(report.coverage).toEqual({
       status: "partial",
       projectsRequested: 2,
@@ -353,10 +459,11 @@ describe("CurrentSnapshotService.organizationReport", () => {
     const report = await createCurrentSnapshotService(source).organizationReport(
       "org-1",
       undefined,
-      { projectIds: ["project-2", "project-missing"] },
+      { projectIds: ["project-missing", "project-2", "project-2"] },
     );
 
     expect(snapshotted).toEqual(["project-2"]);
+    expect(report.requestedProjectIds).toEqual(["project-2", "project-missing"]);
     expect(report.coverage).toEqual({
       status: "partial",
       projectsRequested: 2,
@@ -418,6 +525,53 @@ describe("CurrentSnapshotService.organizationReport", () => {
         projectIds: [],
       }),
     ).rejects.toThrow("must name at least one project");
+  });
+
+  it("preserves sorted requested IDs when every project snapshot fails", async () => {
+    const source: CurrentSnapshotSource = {
+      listProjects: async () => ({
+        projectIds: ["project-b", "project-a"],
+        unavailableProjectIds: [],
+      }),
+      getProjectSnapshot: async () => {
+        throw new Error("Unavailable");
+      },
+      listBranchSizes: async () => {
+        throw new Error("Branch sizes must not be requested after a snapshot failure");
+      },
+    };
+
+    const report = await createCurrentSnapshotService(source).organizationReport("org-1");
+
+    expect(report.requestedProjectIds).toEqual(["project-a", "project-b"]);
+    expect(report.projects).toEqual([]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      projectsRequested: 2,
+      projectsReturned: 0,
+    });
+    expect(report.coverage.errors.map((error) => error.projectId).sort()).toEqual([
+      "project-a",
+      "project-b",
+    ]);
+  });
+
+  it("deduplicates and sorts the requested inventory scope", async () => {
+    const source: CurrentSnapshotSource = {
+      listProjects: async () => ({
+        projectIds: [],
+        unavailableProjectIds: ["project-b", "project-a", "project-b"],
+      }),
+      getProjectSnapshot: async () => {
+        throw new Error("No available projects");
+      },
+      listBranchSizes: async () => ({ branches: [] }),
+    };
+
+    const report = await createCurrentSnapshotService(source).organizationReport("org-1");
+
+    expect(report.requestedProjectIds).toEqual(["project-a", "project-b"]);
+    expect(report.coverage.projectsRequested).toBe(2);
   });
 
   it("propagates cancellation instead of returning partial snapshots", async () => {

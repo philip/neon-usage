@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { BranchConsumptionSource } from "../src/consumption-source.js";
+import { createBranchConsumptionService } from "../src/history-report.js";
 import { createInMemoryEvidenceFactStore } from "../src/in-memory-fact-store.js";
-import { type BranchConsumptionSource, createBranchConsumptionService } from "../src/index.js";
 import { NeonApiError } from "../src/neon-api-source.js";
 
 describe("BranchConsumptionService.branchReport", () => {
@@ -227,16 +228,19 @@ describe("BranchConsumptionService.branchReport", () => {
   it("requires an exact branch intent when resuming", async () => {
     const store = createInMemoryEvidenceFactStore();
     const controller = new AbortController();
+    const appendPage = store.appendCollectionPage.bind(store);
+    store.appendCollectionPage = async (write, signal) => {
+      const receipt = await appendPage(write, signal);
+      controller.abort("interrupted after page commit");
+      return receipt;
+    };
     await expect(
       createBranchConsumptionService(
         {
-          getBranchPage: async () => {
-            controller.abort("interrupted");
-            return {
-              branches: [{ projectId: "project-1", branchId: "branch-1", periods: [] }],
-              nextCursor: "next",
-            };
-          },
+          getBranchPage: async () => ({
+            branches: [{ projectId: "project-1", branchId: "branch-1", periods: [] }],
+            nextCursor: "next",
+          }),
         },
         {
           now,
@@ -247,6 +251,10 @@ describe("BranchConsumptionService.branchReport", () => {
       ).branchReport(branchQuery, { signal: controller.signal }),
     ).rejects.toMatchObject({ kind: "cancelled" });
 
+    expect(await store.getCollectionRun("run_branch-resume")).toMatchObject({
+      status: "running",
+      pageCount: 1,
+    });
     await expect(
       createBranchConsumptionService(
         { getBranchPage: async () => ({ branches: [], nextCursor: null }) },

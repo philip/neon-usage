@@ -1,8 +1,212 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { toSourceErrorDetail } from "../src/errors.js";
-import { createNeonApiSource, NeonApiError } from "../src/neon-api-source.js";
+import {
+  createNeonApiSource,
+  NeonApiError,
+  type NeonSourceEvidence,
+} from "../src/neon-api-source.js";
 
 describe("Neon API source", () => {
+  it.each(["credential-short", `credential-${"s".repeat(700)}`])(
+    "screens full credentials in raw provider message and code before bounding them (%s)",
+    async (apiKey) => {
+      const source = createNeonApiSource({
+        apiKey,
+        maxRetries: 0,
+        fetch: async () =>
+          Response.json(
+            { message: `prefix-${apiKey}-suffix`, code: `CODE-${apiKey}-suffix` },
+            { status: 403 },
+          ),
+      });
+      const error = await source.getOrganization("org-1").catch((reason: unknown) => reason);
+      expect(error).toMatchObject({
+        message: "Neon API request failed with HTTP 403: unrecognized error response",
+        code: undefined,
+      });
+      expect(JSON.stringify(toSourceErrorDetail(error))).not.toContain("credential-");
+    },
+  );
+
+  it.each([
+    ["organization", "extra-cursor"],
+    ["organization", `prefix-credential-secret-suffix`],
+    ["organization", "x".repeat(2001)],
+    ["quota", "prefix-credential-secret-suffix"],
+    ["project", "page-two"],
+    ["project", "x".repeat(2001)],
+    ["project", "prefix-credential-secret-suffix"],
+  ])(
+    "retains only validated endpoint cursors in hash evidence (%s, %s)",
+    async (endpoint, cursor) => {
+      const records: NeonSourceEvidence[] = [];
+      const source = createNeonApiSource({
+        apiKey: "credential-secret",
+        evidence: {
+          sourceAccount: "test",
+          retention: "hash_only",
+          write: async (record) => {
+            records.push(record);
+          },
+        },
+        fetch: async () =>
+          Response.json(
+            endpoint === "organization"
+              ? { id: "org-1", plan: "free", pagination: { cursor } }
+              : endpoint === "quota"
+                ? { project: { id: "project-1" }, pagination: { cursor } }
+                : { projects: [], pagination: { cursor } },
+          ),
+      });
+      if (endpoint !== "project") {
+        await (endpoint === "organization"
+          ? source.getOrganization("org-1")
+          : source.getProjectQuota("project-1"));
+        expect(records[0]?.response.cursorOut).toBeNull();
+      } else {
+        const result = source.getProjectPage(
+          {
+            organizationId: "org-1",
+            from: "2026-08-01T00:00:00Z",
+            to: "2026-08-02T00:00:00Z",
+            granularity: "daily",
+            metrics: ["compute_unit_seconds"],
+          },
+          null,
+        );
+        if (cursor === "page-two") {
+          expect((await result).nextCursor).toBe(cursor);
+          expect(records[0]?.response.cursorOut).toBe(cursor);
+        } else {
+          await expect(result).rejects.toMatchObject({ name: "NeonResponseError" });
+          expect(records.every((record) => record.response.cursorOut === null)).toBe(true);
+        }
+      }
+      expect(JSON.stringify(records)).not.toContain("credential-secret");
+      expect(records.every((record) => !record.response.bodyBase64)).toBe(true);
+      expect(records.every((record) => (record.response.cursorOut?.length ?? 0) <= 2000)).toBe(
+        true,
+      );
+    },
+  );
+
+  it("keeps credential cursors out of durable hash evidence metadata", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "neon-usage-cursor-evidence-"));
+    const path = join(directory, "evidence.json");
+    try {
+      const source = createNeonApiSource({
+        apiKey: "credential-secret",
+        evidence: {
+          sourceAccount: "test",
+          retention: "hash_only",
+          write: async (record) => {
+            writeFileSync(path, JSON.stringify(record));
+          },
+        },
+        fetch: async () =>
+          Response.json({
+            id: "org-1",
+            plan: "free",
+            pagination: { cursor: "prefix-credential-secret-suffix" },
+          }),
+      });
+      await source.getOrganization("org-1");
+      const evidence = readFileSync(path, "utf8");
+      expect(evidence).not.toContain("credential-secret");
+      expect(JSON.parse(evidence).response).toMatchObject({ cursorOut: null });
+      expect(JSON.parse(evidence).response).not.toHaveProperty("bodyBase64");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["message", "code"])(
+    "preserves unrelated diagnostics when only provider %s contains the credential",
+    async (field) => {
+      const source = createNeonApiSource({
+        apiKey: "credential-secret",
+        maxRetries: 0,
+        fetch: async () =>
+          Response.json(
+            {
+              message: "useful diagnostic",
+              code: "USEFUL_CODE",
+              [field]: "prefix-credential-secret-suffix",
+            },
+            { status: 403 },
+          ),
+      });
+      const error = await source.getOrganization("org-1").catch((reason: unknown) => reason);
+      expect(toSourceErrorDetail(error)).toMatchObject(
+        field === "message"
+          ? {
+              code: "USEFUL_CODE",
+              message: "Neon API request failed with HTTP 403: unrecognized error response",
+            }
+          : {
+              code: "NEON_API_ERROR",
+              message: "Neon API request failed with HTTP 403: useful diagnostic",
+            },
+      );
+    },
+  );
+
+  it("walks unavailable-only project pages using the same combined item count as its limit", async () => {
+    const requested: Array<string | null> = [];
+    const source = createNeonApiSource({
+      apiKey: "secret",
+      fetch: async (input) => {
+        const cursor = new URL(String(input)).searchParams.get("cursor");
+        requested.push(cursor);
+        return Response.json(
+          cursor === null
+            ? {
+                projects: [],
+                unavailable_project_ids: ["project-a"],
+                pagination: { cursor: "next" },
+              }
+            : { projects: [], unavailable_project_ids: ["project-b"] },
+        );
+      },
+    });
+    await expect(source.listProjects("org-1", { maxItems: 2 })).resolves.toMatchObject({
+      projectIds: [],
+      unavailableProjectIds: ["project-a", "project-b"],
+    });
+    expect(requested).toEqual([null, "next"]);
+    await expect(source.listProjects("org-1", { maxItems: 1 })).rejects.toMatchObject({
+      kind: "item_limit",
+    });
+  });
+  it.each([200, 403])(
+    "suppresses raw credential-bearing request IDs before bounding status %i diagnostics",
+    async (status) => {
+      const apiKey = `credential-${"s".repeat(300)}`;
+      const evidence: unknown[] = [];
+      const source = createNeonApiSource({
+        apiKey,
+        maxRetries: 0,
+        evidence: {
+          sourceAccount: "test",
+          retention: "hash_only",
+          write: async (record) => {
+            evidence.push(record);
+          },
+        },
+        fetch: async () =>
+          Response.json(
+            { id: "org-1", plan: "free" },
+            { status, headers: { "x-neon-ret-request-id": `prefix-${apiKey}-suffix` } },
+          ),
+      });
+      const result = await source.getOrganization("org-1").catch((error: unknown) => error);
+      if (status === 403) expect(result).toHaveProperty("requestId", undefined);
+      expect(JSON.stringify([result, evidence])).not.toContain("credential-");
+    },
+  );
   it("rejects malformed resource IDs before constructing authenticated paths", async () => {
     let fetchCalled = false;
     const source = createNeonApiSource({
@@ -23,13 +227,14 @@ describe("Neon API source", () => {
   });
 
   it("rejects oversized responses before retaining or parsing them", async () => {
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream({ cancel }), {
+      headers: { "content-length": "31", "x-request-id": "request-large" },
+    });
     const source = createNeonApiSource({
       apiKey: "secret",
       maxResponseBytes: 10,
-      fetch: async () =>
-        new Response('{"id":"org-1","plan":"scale"}', {
-          headers: { "content-length": "31", "x-request-id": "request-large" },
-        }),
+      fetch: async () => response,
     });
 
     const error = await source.getOrganization("org-1").catch((reason: unknown) => reason);
@@ -37,6 +242,7 @@ describe("Neon API source", () => {
     expect(error).toMatchObject({
       name: "NeonResponseTooLargeError",
     });
+    expect(cancel).toHaveBeenCalledOnce();
     expect(toSourceErrorDetail(error)).toEqual({
       code: "NEON_RESPONSE_TOO_LARGE",
       message: "Neon API response exceeds the 10-byte limit",
@@ -401,7 +607,7 @@ describe("Neon API source", () => {
     expect(calls).toBe(2);
   });
 
-  it("flags an empty page advancing to a new cursor as possible truncation", async () => {
+  it("rejects an empty page advancing to a new cursor", async () => {
     let calls = 0;
     const source = createNeonApiSource({
       apiKey: "secret",
@@ -416,14 +622,12 @@ describe("Neon API source", () => {
       },
     });
 
-    await expect(source.listProjectDirectory("org-1")).resolves.toEqual({
-      projects: [{ id: "project-1", name: "Project One" }],
-      unavailableProjectIds: [],
-      qualityFlags: ["CURSOR_REPEATED"],
-    });
+    await expect(source.listProjectDirectory("org-1")).rejects.toThrow(
+      "Neon project list returned an empty page with a continuation cursor",
+    );
   });
 
-  it("stops project inventory on a short page with a terminal cursor", async () => {
+  it("rejects a repeated non-empty project page even when every project was seen", async () => {
     let calls = 0;
     const source = createNeonApiSource({
       apiKey: "secret",
@@ -436,11 +640,9 @@ describe("Neon API source", () => {
       },
     });
 
-    await expect(source.listProjectDirectory("org-1")).resolves.toEqual({
-      projects: [{ id: "project-1", name: "Project One" }],
-      unavailableProjectIds: [],
-      qualityFlags: ["CURSOR_REPEATED"],
-    });
+    await expect(source.listProjectDirectory("org-1")).rejects.toThrow(
+      "Neon project list returned a repeated cursor",
+    );
     expect(calls).toBe(2);
   });
 
@@ -642,6 +844,136 @@ describe("Neon API source", () => {
       retryable: true,
     });
   });
+
+  it("starts transport timeout after queued admission and preserves it across retries", async () => {
+    vi.useFakeTimers();
+    let admitted!: () => void;
+    let calls = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 4));
+        throw new TypeError("retry network error");
+      }
+      return new Promise(() => {});
+    });
+    const source = createNeonApiSource({
+      apiKey: "secret",
+      requestTimeoutMs: 10,
+      random: () => 0.012,
+      fetch,
+      requestCoordinator: {
+        acquire: () =>
+          new Promise<void>((resolve) => {
+            admitted = resolve;
+          }),
+      },
+    });
+    let settled = false;
+    const request = source.getOrganization("org-1").catch((error: unknown) => {
+      settled = true;
+      return error;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+      expect(fetch).not.toHaveBeenCalled();
+      admitted();
+      await vi.advanceTimersByTimeAsync(7);
+      expect(fetch).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+      admitted();
+      await vi.advanceTimersByTimeAsync(2);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(request).resolves.toMatchObject({ kind: "timeout", attempts: 2 });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops queued admission on an inventory deadline", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const source = createNeonApiSource({
+      apiKey: "secret",
+      requestTimeoutMs: 10,
+      fetch,
+      requestCoordinator: { acquire: async () => new Promise(() => {}) },
+    });
+    try {
+      const request = source
+        .listProjectDirectory("org-1", { maxDurationMs: 100 })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(99);
+      expect(fetch).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(request).resolves.toMatchObject({ kind: "time_limit" });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([-(2 ** 40), 2 ** 40])(
+    "keeps the transport budget monotonic after a %s ms wall-clock jump",
+    async (jump) => {
+      vi.useFakeTimers();
+      const wallClock = Date.now;
+      let offset = 0;
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => wallClock() + offset);
+      let admitted!: () => void;
+      let admissions = 0;
+      const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+        if (fetch.mock.calls.length === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 4));
+          offset = jump;
+          throw new TypeError("retry after clock adjustment");
+        }
+        return new Promise(() => {});
+      });
+      const source = createNeonApiSource({
+        apiKey: "secret",
+        requestTimeoutMs: 10,
+        random: () => 0.012,
+        fetch,
+        requestCoordinator: {
+          async acquire() {
+            admissions += 1;
+            if (admissions > 1)
+              await new Promise<void>((resolve) => {
+                admitted = resolve;
+              });
+          },
+        },
+      });
+      let settled = false;
+      const request = source.getOrganization("org-1").catch((error: unknown) => {
+        settled = true;
+        return error;
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(7);
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(100);
+        offset = -jump;
+        admitted();
+        await vi.advanceTimersByTimeAsync(2);
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(request).resolves.toMatchObject({ kind: "timeout", attempts: 2 });
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        clock.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("declines a retry whose server minimum exceeds the configured delay budget", async () => {
     let calls = 0;
@@ -1236,6 +1568,368 @@ describe("Neon API source", () => {
 });
 
 describe("Neon API source hardening", () => {
+  it.each(["cooperative", "rejecting", "pending"] as const)(
+    "cancels an oversized header body promptly when cancellation is %s",
+    async (cancellation) => {
+      const pull = vi.fn();
+      let rejectCancellation: (reason: Error) => void = () => {};
+      const cancel = vi.fn(() => {
+        if (cancellation === "rejecting") return Promise.reject(new Error("cancel failed"));
+        if (cancellation === "pending")
+          return new Promise<void>((_resolve, reject) => {
+            rejectCancellation = reject;
+          });
+      });
+      const oversized = new Response(new ReadableStream({ pull, cancel }, { highWaterMark: 0 }), {
+        headers: { "content-length": "1000" },
+      });
+      const fetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(oversized)
+        .mockResolvedValue(Response.json({ id: "org-1", plan: "free" }));
+      const acquire = vi.fn(async () => {});
+      const write = vi.fn(async () => {});
+      const source = createNeonApiSource({
+        apiKey: "secret",
+        maxResponseBytes: 100,
+        requestCoordinator: { acquire },
+        evidence: { sourceAccount: "test", retention: "hash_only", write },
+        fetch,
+      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          source
+            .getOrganization("org-1", { maxResponseBytes: 10 })
+            .catch((error: unknown) => error),
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve("stalled"), 100);
+          }),
+        ]);
+        expect(result).toMatchObject({ name: "OperationByteLimitError", kind: "byte_limit" });
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(pull).not.toHaveBeenCalled();
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(acquire).toHaveBeenCalledOnce();
+        expect(write).not.toHaveBeenCalled();
+        await expect(source.getOrganization("org-1")).resolves.toMatchObject({ id: "org-1" });
+        rejectCancellation(new Error("late cancellation rejection"));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(pull).not.toHaveBeenCalled();
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(acquire).toHaveBeenCalledTimes(2);
+        expect(write).toHaveBeenCalledOnce();
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  );
+
+  it.each(["exhausted", "remaining", "sufficient"] as const)(
+    "charges partial failed response reads when the retry budget is %s",
+    async (budget) => {
+      const failedChunk = new TextEncoder().encode("partial failed body");
+      const completeBody = JSON.stringify({ projects: [] });
+      let calls = 0;
+      const source = createNeonApiSource({
+        apiKey: "secret",
+        maxRetries: 1,
+        sleep: async () => {},
+        random: () => 0,
+        fetch: async () => {
+          calls += 1;
+          if (calls > 1) return new Response(completeBody);
+          let reads = 0;
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                if (reads++ === 0) controller.enqueue(failedChunk);
+                else controller.error(new Error("stream failed after delivering bytes"));
+              },
+            }),
+          );
+        },
+      });
+      const operation = source.getProjectPage(
+        {
+          organizationId: "org-1",
+          from: "2026-08-07T00:00:00Z",
+          to: "2026-08-08T00:00:00Z",
+          granularity: "daily",
+          metrics: ["compute_unit_seconds"],
+        },
+        null,
+        {
+          maxResponseBytes:
+            failedChunk.byteLength +
+            (budget === "exhausted" ? 0 : budget === "remaining" ? 1 : 100),
+        },
+      );
+
+      if (budget === "sufficient") {
+        await expect(operation).resolves.toMatchObject({
+          responseBytes: failedChunk.byteLength + Buffer.byteLength(completeBody),
+        });
+      } else {
+        await expect(operation).rejects.toMatchObject({ kind: "byte_limit" });
+      }
+      expect(calls).toBe(budget === "exhausted" ? 1 : 2);
+    },
+  );
+
+  it.each(["organizations", "projects", "branches"] as const)(
+    "rejects %s completion after synchronous work exhausts the monotonic deadline",
+    async (inventory) => {
+      let now = 0;
+      const monotonicClock = vi.spyOn(performance, "now").mockImplementation(() => now);
+      const source = createNeonApiSource({
+        apiKey: "secret",
+        fetch: async () => {
+          // The event loop has not yielded to the real deadline timer.
+          now = 1001;
+          return Response.json({ organizations: [], projects: [], branches: [] });
+        },
+      });
+      try {
+        const context = { maxDurationMs: 1000 };
+        await expect(
+          inventory === "organizations"
+            ? source.listOrganizations(context)
+            : inventory === "projects"
+              ? source.listProjectDirectory("org-1", context)
+              : source.listBranchSizes("project-1", context),
+        ).rejects.toMatchObject({ kind: "time_limit" });
+      } finally {
+        monotonicClock.mockRestore();
+      }
+    },
+  );
+
+  it.each(["organizations", "projects", "branches"] as const)(
+    "rejects %s inventories exceeding the operation item budget",
+    async (inventory) => {
+      const source = createNeonApiSource({
+        apiKey: "secret",
+        fetch: async () =>
+          Response.json({
+            organizations: [
+              { id: "org-1", name: "One", handle: "one", plan: "free" },
+              { id: "org-2", name: "Two", handle: "two", plan: "free" },
+            ],
+            projects: [
+              { id: "project-1", name: "One" },
+              { id: "project-2", name: "Two" },
+            ],
+            branches: [{ id: "branch-1" }, { id: "branch-2" }],
+          }),
+      });
+      const context = { maxItems: 1 };
+      const operation =
+        inventory === "organizations"
+          ? source.listOrganizations(context)
+          : inventory === "projects"
+            ? source.listProjectDirectory("org-1", context)
+            : source.listBranchSizes("project-1", context);
+
+      await expect(operation).rejects.toMatchObject({ kind: "item_limit" });
+    },
+  );
+
+  it("charges a shared project/branch item budget before retaining whole inventory pages", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      return Response.json(
+        pathname.endsWith("/projects")
+          ? { projects: [{ id: "project-1", name: "One" }], unavailable_project_ids: ["project-2"] }
+          : {
+              branches: pathname.includes("project-1")
+                ? [{ id: "branch-1" }, { id: "branch-2" }]
+                : [{ id: "branch-3" }],
+            },
+      );
+    });
+    const source = createNeonApiSource({ apiKey: "secret", fetch });
+    const context = { maxItems: 3, retainedItemBudget: { remaining: 3 } };
+    await source.listProjectDirectory("org-1", context);
+    expect(context.retainedItemBudget.remaining).toBe(1);
+    await expect(source.listBranchSizes("project-1", context)).rejects.toMatchObject({
+      kind: "item_limit",
+    });
+    expect(context.retainedItemBudget.remaining).toBe(1);
+    await expect(source.listBranchSizes("project-2", context)).resolves.toMatchObject({
+      branches: [{ branchId: "branch-3" }],
+    });
+    expect(context.retainedItemBudget.remaining).toBe(0);
+    await expect(source.listBranchSizes("project-3", context)).rejects.toMatchObject({
+      kind: "item_limit",
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["organizations", "projects", "branches"] as const)(
+    "accounts for pages and cumulative bytes in %s inventories",
+    async (inventory) => {
+      const payload = JSON.stringify({
+        organizations: [{ id: "org-1", name: "One", handle: "one", plan: "free" }],
+        projects: [{ id: "project-1", name: "One" }],
+        branches: [{ id: "branch-1" }],
+        pagination: { cursor: "next", next: "next" },
+      });
+      for (const [context, expectedCalls] of [
+        [{ maxPages: 1 }, 1],
+        [{ maxResponseBytes: Buffer.byteLength(payload) }, 1],
+        [{ maxResponseBytes: Buffer.byteLength(payload) + 1 }, 2],
+      ] as const) {
+        let calls = 0;
+        const source = createNeonApiSource({
+          apiKey: "secret",
+          fetch: async () => {
+            calls += 1;
+            return new Response(payload);
+          },
+        });
+        const operation =
+          inventory === "organizations"
+            ? source.listOrganizations(context)
+            : inventory === "projects"
+              ? source.listProjectDirectory("org-1", context)
+              : source.listBranchSizes("project-1", context);
+
+        await expect(operation).rejects.toMatchObject({
+          kind: "maxPages" in context ? "page_limit" : "byte_limit",
+        });
+        expect(calls).toBe(expectedCalls);
+      }
+    },
+  );
+
+  it.each(["probe", "spending notification"] as const)(
+    "does not turn a %s byte limit into provider unavailability",
+    async (operation) => {
+      const source = createNeonApiSource({
+        apiKey: "secret",
+        fetch: async () => Response.json({ projects: [], spending_limit_cents: null }),
+      });
+      const context = { maxResponseBytes: 1 };
+      await expect(
+        operation === "probe"
+          ? source.probeProjectHistory("org-1", context)
+          : source.getSpendingNotification("org-1", context),
+      ).rejects.toMatchObject({ kind: "byte_limit" });
+    },
+  );
+
+  it("rejects an empty project page pointing back to an earlier cursor", async () => {
+    let calls = 0;
+    const source = createNeonApiSource({
+      apiKey: "secret",
+      fetch: async () => {
+        calls += 1;
+        return Response.json({
+          projects: calls === 3 ? [] : [{ id: `project-${calls}`, name: "One" }],
+          pagination: { cursor: calls === 2 ? "cursor-2" : "cursor-1" },
+        });
+      },
+    });
+
+    await expect(source.listProjectDirectory("org-1")).rejects.toMatchObject({
+      integrityFailure: true,
+      message: "Neon project list returned an empty page with a continuation cursor",
+    });
+    expect(calls).toBe(3);
+  });
+
+  it("accepts a terminal empty branch page echoing the requested cursor", async () => {
+    let calls = 0;
+    const source = createNeonApiSource({
+      apiKey: "secret",
+      fetch: async () => {
+        calls += 1;
+        return Response.json({
+          branches: calls === 1 ? [{ id: "branch-1" }] : [],
+          pagination: { next: "terminal" },
+        });
+      },
+    });
+
+    await expect(source.listBranchSizes("project-1")).resolves.toMatchObject({
+      branches: [{ branchId: "branch-1" }],
+    });
+    expect(calls).toBe(2);
+  });
+
+  it.each(["coordinator", "fetch", "reader", "sleep", "evidence"] as const)(
+    "cancels promptly when the injected %s never settles",
+    async (phase) => {
+      let entered: () => void = () => {};
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const stall = async () => {
+        entered();
+        return new Promise<never>(() => {});
+      };
+      let readerCancelled = false;
+      const source = createNeonApiSource({
+        apiKey: "secret",
+        requestTimeoutMs: 1000,
+        ...(phase === "coordinator" ? { requestCoordinator: { acquire: stall } } : {}),
+        fetch: async () => {
+          if (phase === "fetch") return stall();
+          if (phase === "reader") {
+            return new Response(
+              new ReadableStream({
+                pull: stall,
+                cancel: () => {
+                  readerCancelled = true;
+                  return new Promise(() => {});
+                },
+              }),
+            );
+          }
+          return phase === "sleep"
+            ? Response.json({}, { status: 503 })
+            : Response.json({ id: "org-1", plan: "free" });
+        },
+        ...(phase === "sleep" ? { sleep: stall, random: () => 0 } : {}),
+        ...(phase === "evidence"
+          ? { evidence: { sourceAccount: "test", retention: "hash_only" as const, write: stall } }
+          : {}),
+      });
+      const controller = new AbortController();
+      const result = source
+        .getOrganization("org-1", { signal: controller.signal })
+        .catch((error: unknown) => error);
+      await started;
+      controller.abort("caller cancelled");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const settled = await Promise.race([
+          result,
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve({ kind: "stalled" }), 100);
+          }),
+        ]);
+        expect(settled).toMatchObject({ name: "NeonTransportError", kind: "cancelled" });
+        if (phase === "reader") expect(readerCancelled).toBe(true);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  );
+
+  it("enforces an inventory deadline even when fetch ignores cancellation", async () => {
+    const source = createNeonApiSource({
+      apiKey: "secret",
+      fetch: async () => new Promise(() => {}),
+    });
+
+    await expect(source.listProjectDirectory("org-1", { maxDurationMs: 5 })).rejects.toMatchObject({
+      kind: "time_limit",
+    });
+  });
+
   it("rejects a project response whose id does not match the request", async () => {
     const source = createNeonApiSource({
       apiKey: "secret",

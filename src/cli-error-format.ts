@@ -1,4 +1,5 @@
 import type { CliErrorParts } from "./errors.js";
+import type { SerializedOutputTooLargeError } from "./machine-json.js";
 
 // Presentation for a top-level CLI error: a labeled headline, then an indented
 // detail block and an actionable "To fix" block. bin.ts sanitizes the parts
@@ -57,4 +58,12 @@ function wrap(text: string, width: number): string[] {
   }
   if (line !== "") out.push(line);
   return out.length > 0 ? out : [""];
+}
+
+export function serializedOutputErrorParts(error: SerializedOutputTooLargeError): CliErrorParts {
+  return {
+    headline: error.code,
+    detail: error.message,
+    fix: "Reduce the query scope or use the SDK to consume the measured object directly.",
+  };
 }

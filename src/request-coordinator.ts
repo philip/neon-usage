@@ -1,3 +1,5 @@
+import { raceAbort } from "./operation-context.js";
+
 export interface RequestCoordinator {
   acquire(signal?: AbortSignal): Promise<void>;
 }
@@ -6,7 +8,8 @@ export type SlidingWindowCoordinatorOptions = {
   limit: number;
   intervalMs: number;
   now?: () => number;
-  sleep?: (milliseconds: number) => Promise<void>;
+  sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  upstream?: RequestCoordinator;
 };
 
 type Pending = {
@@ -43,22 +46,28 @@ export function createSlidingWindowRequestCoordinator(
         }
         const cutoff = now() - options.intervalMs;
         while (admittedAt[0] !== undefined && admittedAt[0] <= cutoff) admittedAt.shift();
-        if (admittedAt.length >= options.limit) {
-          try {
+        try {
+          if (admittedAt.length >= options.limit) {
             await cancellableSleep(
               (admittedAt[0] ?? now()) + options.intervalMs - now(),
               pending.signal,
               options.sleep,
             );
-          } catch (error) {
-            if (queue[0] === pending) {
-              queue.shift();
-              if (pending.cancel) pending.signal?.removeEventListener("abort", pending.cancel);
-              pending.reject(error);
-            }
+            continue;
+          }
+          // Hold local capacity until upstream admits, so neither permit ages during another wait.
+          if (options.upstream) {
+            await raceAbort(options.upstream.acquire(pending.signal), pending.signal);
+          }
+        } catch (error) {
+          if (queue[0] === pending) {
+            queue.shift();
+            if (pending.cancel) pending.signal?.removeEventListener("abort", pending.cancel);
+            pending.reject(error);
           }
           continue;
         }
+        if (queue[0] !== pending) continue;
         queue.shift();
         if (pending.cancel) pending.signal?.removeEventListener("abort", pending.cancel);
         admittedAt.push(now());
@@ -91,31 +100,18 @@ export function createSlidingWindowRequestCoordinator(
 async function cancellableSleep(
   milliseconds: number,
   signal: AbortSignal | undefined,
-  customSleep: ((milliseconds: number) => Promise<void>) | undefined,
+  customSleep: SlidingWindowCoordinatorOptions["sleep"],
 ): Promise<void> {
-  if (!customSleep) {
-    await new Promise<void>((resolve, reject) => {
-      const cancel = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", cancel);
-        reject(signal?.reason);
-      };
-      const timer = setTimeout(() => {
-        signal?.removeEventListener("abort", cancel);
-        resolve();
-      }, milliseconds);
-      signal?.addEventListener("abort", cancel, { once: true });
-    });
-    return;
-  }
-  let cancel: (() => void) | undefined;
+  if (customSleep) return raceAbort(customSleep(milliseconds, signal), signal);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const cancelled = new Promise<never>((_resolve, reject) => {
-      cancel = () => reject(signal?.reason);
-      signal?.addEventListener("abort", cancel, { once: true });
-    });
-    await Promise.race([customSleep(milliseconds), cancelled]);
+    await raceAbort(
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, milliseconds);
+      }),
+      signal,
+    );
   } finally {
-    if (cancel) signal?.removeEventListener("abort", cancel);
+    clearTimeout(timer);
   }
 }
