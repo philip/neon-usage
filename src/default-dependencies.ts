@@ -384,7 +384,7 @@ export function createNeonDependencies(config: NeonDependenciesConfig): Internal
       };
       // The source's project filter caps at 100 IDs; a larger scoped query
       // collects in chunks and estimates the honestly merged report once, so
-      // per-organization allowances apply exactly once. Chunked runs use fresh
+      // allowances retain their documented scope exactly once. Chunked runs use fresh
       // run IDs — an explicit --run-id/--resume cannot name several.
       // Dedupe before chunking: a repeated ID would land in two chunks and
       // trip the merge's overlapping-filter check for a merely redundant query.

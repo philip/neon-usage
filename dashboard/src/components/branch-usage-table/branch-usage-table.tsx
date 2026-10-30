@@ -11,8 +11,12 @@ export interface BranchUsageColumn {
   id: string;
   /** Column header, e.g. "Compute". */
   label: string;
-  /** Unit suffix beside the header, e.g. "CU-hrs". */
+  /** Header unit, e.g. "CU-hrs". */
   unit?: string;
+  /** Longer header explanation shown on hover. */
+  description?: string;
+  /** Optional heading spanning adjacent related columns. */
+  group?: string;
   /** Per-column formatter; falls back to two decimals. */
   format?: (value: number) => string;
 }
@@ -112,12 +116,12 @@ export type BranchUsageTableProps = Omit<
 const DEFAULT_FORMAT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
+const EXPANDED_FORMAT = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 20,
+});
 
 const TOTALS_ID = "__totals__";
 const FULL_BAR = 100;
-/** Below this width the columns stack; matches the max-[40rem] variants. */
-const STACK_AT = "max-[40rem]";
-
 const formatCell = (column: BranchUsageColumn, value: number) =>
   column.format ? column.format(value) : DEFAULT_FORMAT.format(value);
 
@@ -250,26 +254,51 @@ const MetricCell = ({
   isSorted: boolean;
   share: number;
   value: number;
-}) => (
-  <td
-    className={cn(
-      "relative py-1.5 pl-3 text-right font-mono text-[13px] tabular-nums",
-      `${STACK_AT}:flex ${STACK_AT}:justify-between ${STACK_AT}:pl-0`,
-      `${STACK_AT}:before:text-muted-foreground ${STACK_AT}:before:text-xs ${STACK_AT}:before:font-sans ${STACK_AT}:before:content-[attr(data-label)]`,
-      isMuted && "text-muted-foreground"
-    )}
-    data-label={column.label}
-  >
-    {formatCell(column, value)}
-    {isSorted ? (
+}) => {
+  const mobileLabel = `${column.group ? `${column.group} ` : ""}${column.label}${column.unit ? ` · ${column.unit}` : ""}`;
+  const expanded = EXPANDED_FORMAT.format(value);
+  const formatted = formatCell(column, value);
+  const displaysAsZero = formatted === formatCell(column, 0);
+  const display = displaysAsZero ? "—" : formatted;
+  const hasExpandedValue = display !== expanded;
+  const isCompact = /[KMBT]$/.test(display);
+
+  return (
+    <td
+      className={cn(
+        "relative py-1.5 pl-3 text-right font-mono text-[13px] tabular-nums",
+        "max-[40rem]:flex max-[40rem]:justify-between max-[40rem]:pl-0",
+        "max-[40rem]:before:text-muted-foreground max-[40rem]:before:text-xs max-[40rem]:before:font-sans max-[40rem]:before:content-[attr(data-label)]",
+        isMuted && "text-muted-foreground"
+      )}
+      data-label={mobileLabel}
+    >
+      <span className="sr-only min-[40.0625rem]:hidden">
+        {column.description ?? column.label}
+        {column.unit ? ` (${column.unit})` : ""}: {" "}
+      </span>
       <span
-        aria-hidden="true"
-        className={`absolute bottom-1 left-3 h-px bg-primary/60 ${STACK_AT}:hidden`}
-        style={{ width: `calc((100% - 0.75rem) * ${share})` }}
-      />
-    ) : null}
-  </td>
-);
+        aria-label={hasExpandedValue ? `Approximately ${expanded}` : undefined}
+        className={cn(
+          displaysAsZero && "text-muted-foreground/50",
+          isCompact &&
+            "rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+        )}
+        tabIndex={isCompact ? 0 : undefined}
+        title={hasExpandedValue ? `≈${expanded}` : undefined}
+      >
+        {display}
+      </span>
+      {isSorted ? (
+        <span
+          aria-hidden="true"
+          className="absolute bottom-1 left-3 h-px bg-primary/60 max-[40rem]:hidden"
+          style={{ width: `calc((100% - 0.75rem) * ${share})` }}
+        />
+      ) : null}
+    </td>
+  );
+};
 
 const SortableHeader = ({
   activeSort,
@@ -289,20 +318,38 @@ const SortableHeader = ({
       scope="col"
     >
       <button
-        className="inline-flex items-center gap-1 rounded text-muted-foreground text-xs transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+        className="inline-grid justify-items-end rounded text-muted-foreground text-xs leading-tight transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         onClick={onToggle}
+        title={column.description ?? column.label}
         type="button"
       >
-        {column.label}
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+          {column.label}
+          <SortCaret direction={activeSort.direction} isActive={isActive} />
+        </span>
         {column.unit ? (
           <span className="text-[10px] text-muted-foreground/60">
             {column.unit}
           </span>
         ) : null}
-        <SortCaret direction={activeSort.direction} isActive={isActive} />
       </button>
     </th>
   );
+};
+
+const columnGroupRuns = (columns: BranchUsageColumn[]) => {
+  const runs: Array<{ label: string | undefined; span: number }> = [];
+
+  for (const column of columns) {
+    const previous = runs.at(-1);
+    if (previous && previous.label === column.group) {
+      previous.span += 1;
+    } else {
+      runs.push({ label: column.group, span: 1 });
+    }
+  }
+
+  return runs;
 };
 
 /** One metric: a ranked list, not a one-column table. */
@@ -404,10 +451,10 @@ const TailRow = ({
   onOpen: () => void;
   tail: BranchUsageRow[];
 }) => (
-  <tr
-    className={`border-border/50 border-t ${STACK_AT}:block ${STACK_AT}:py-2`}
-  >
-    <td className={`py-1.5 pr-3 ${STACK_AT}:block`}>
+  <tr className="border-border/50 border-t max-[40rem]:block max-[40rem]:py-2">
+    <td
+      className="sticky left-0 z-10 border-border/40 border-r bg-card py-1.5 pr-3 max-[40rem]:static max-[40rem]:block max-[40rem]:border-r-0"
+    >
       {/* Outside the ranking, so its value can't read as a sort gone wrong. */}
       <button
         className="rounded text-muted-foreground text-xs transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
@@ -442,11 +489,9 @@ const TotalsRow = ({
   entityPlural: string;
   rows: BranchUsageRow[];
 }) => (
-  <tr
-    className={`border-border/50 border-t ${STACK_AT}:block ${STACK_AT}:py-2`}
-  >
+  <tr className="border-border/50 border-t max-[40rem]:block max-[40rem]:py-2">
     <td
-      className={`py-1.5 pr-3 text-muted-foreground text-xs ${STACK_AT}:block`}
+      className="sticky left-0 z-10 border-border/40 border-r bg-card py-1.5 pr-3 text-muted-foreground text-xs max-[40rem]:static max-[40rem]:block max-[40rem]:border-r-0"
     >
       {`all ${rows.length} ${entityPlural}`}
     </td>
@@ -490,69 +535,117 @@ const UsageTable = ({
   showTotals: boolean;
   tail: BranchUsageRow[];
   totalRows: BranchUsageRow[];
-}) => (
-  <table className="w-full border-collapse text-xs">
-    <thead className={`${STACK_AT}:hidden`}>
-      <tr className="border-border/50 border-b">
-        <th
-          className="py-1.5 pr-3 text-left font-normal text-muted-foreground text-xs"
-          scope="col"
-        >
-          {entity.singular}
-        </th>
-        {columns.map((column) => (
-          <SortableHeader
-            activeSort={activeSort}
-            column={column}
-            key={column.id}
-            onToggle={() => onToggleSort(column.id)}
-          />
-        ))}
-      </tr>
-    </thead>
-    <tbody className={`${STACK_AT}:block`}>
-      {head.map((row) => (
-        <tr
-          className={cn(
-            "border-border/30 border-b transition-colors last:border-b-0",
-            isInteractive && "hover:bg-muted/40",
-            `${STACK_AT}:block ${STACK_AT}:py-2`
-          )}
-          key={row.id}
-        >
-          <td
-            className={`max-w-[220px] py-1.5 pr-3 ${STACK_AT}:block ${STACK_AT}:max-w-none`}
-          >
-            <BranchLabel
-              isInteractive={isInteractive}
-              onSelect={() => onSelectBranch?.(row)}
-              row={row}
-            />
-          </td>
-          {columns.map((column) => (
-            <MetricCell
-              column={column}
-              isMuted={false}
-              isSorted={column.id === activeSort.columnId}
-              key={column.id}
-              share={peak > 0 ? (row.metrics[column.id] ?? 0) / peak : 0}
-              value={row.metrics[column.id] ?? 0}
-            />
-          ))}
-        </tr>
-      ))}
-    </tbody>
+}) => {
+  const groupRuns = columnGroupRuns(columns);
+  const hasGroups = groupRuns.some(({ label }) => label !== undefined);
 
-    {tail.length > 0 || showTotals ? (
-      <tfoot className={`${STACK_AT}:block`}>
-        {tail.length > 0 ? (
-          <TailRow columns={columns} entityPlural={entity.plural} onOpen={onOpenTail} tail={tail} />
+  return (
+    <div
+      className="overflow-x-auto max-[40rem]:overflow-x-visible"
+      data-slot="usage-table-scroll"
+    >
+      <table className="w-max min-w-full border-collapse text-xs max-[40rem]:w-full">
+        <colgroup span={1} />
+        {groupRuns.map(({ label, span }, index) => (
+          <colgroup key={`${label ?? "ungrouped"}-${index}`} span={span} />
+        ))}
+        <thead className="max-[40rem]:hidden">
+          <tr className={hasGroups ? undefined : "border-border/50 border-b"}>
+            <th
+              className="sticky left-0 z-20 border-border/40 border-r bg-card py-1.5 pr-3 text-left align-bottom font-normal text-muted-foreground text-xs max-[40rem]:static max-[40rem]:border-r-0"
+              rowSpan={hasGroups ? 2 : 1}
+              scope="col"
+            >
+              {entity.singular}
+            </th>
+            {hasGroups
+              ? groupRuns.map(({ label, span }, index) => (
+                  <th
+                    className="px-1 pt-1 text-center font-medium text-[10px] text-muted-foreground/70"
+                    colSpan={span}
+                    key={`${label ?? "ungrouped"}-${index}`}
+                    scope={label ? "colgroup" : undefined}
+                  >
+                    {label}
+                  </th>
+                ))
+              : columns.map((column) => (
+                  <SortableHeader
+                    activeSort={activeSort}
+                    column={column}
+                    key={column.id}
+                    onToggle={() => onToggleSort(column.id)}
+                  />
+                ))}
+          </tr>
+          {hasGroups ? (
+            <tr className="border-border/50 border-b">
+              {columns.map((column) => (
+                <SortableHeader
+                  activeSort={activeSort}
+                  column={column}
+                  key={column.id}
+                  onToggle={() => onToggleSort(column.id)}
+                />
+              ))}
+            </tr>
+          ) : null}
+        </thead>
+        <tbody className="max-[40rem]:block">
+          {head.map((row) => (
+            <tr
+              className={cn(
+                "group border-border/30 border-b transition-colors last:border-b-0",
+                isInteractive && "hover:bg-muted/40",
+                "max-[40rem]:block max-[40rem]:py-2"
+              )}
+              key={row.id}
+            >
+              <td
+                className={cn(
+                  "sticky left-0 z-10 max-w-[220px] border-border/40 border-r bg-card py-1.5 pr-3 max-[40rem]:static max-[40rem]:block max-[40rem]:max-w-none max-[40rem]:border-r-0",
+                  isInteractive && "group-hover:bg-muted/40"
+                )}
+              >
+                <BranchLabel
+                  isInteractive={isInteractive}
+                  onSelect={() => onSelectBranch?.(row)}
+                  row={row}
+                />
+              </td>
+              {columns.map((column) => (
+                <MetricCell
+                  column={column}
+                  isMuted={false}
+                  isSorted={column.id === activeSort.columnId}
+                  key={column.id}
+                  share={peak > 0 ? (row.metrics[column.id] ?? 0) / peak : 0}
+                  value={row.metrics[column.id] ?? 0}
+                />
+              ))}
+            </tr>
+          ))}
+        </tbody>
+
+        {tail.length > 0 || showTotals ? (
+          <tfoot className="max-[40rem]:block">
+            {tail.length > 0 ? (
+              <TailRow
+                columns={columns}
+                entityPlural={entity.plural}
+                onOpen={onOpenTail}
+                tail={tail}
+              />
+            ) : null}
+            {showTotals ? (
+              <TotalsRow columns={columns} entityPlural={entity.plural} rows={totalRows} />
+            ) : null}
+          </tfoot>
         ) : null}
-        {showTotals ? <TotalsRow columns={columns} entityPlural={entity.plural} rows={totalRows} /> : null}
-      </tfoot>
-    ) : null}
-  </table>
-);
+      </table>
+    </div>
+  );
+};
 
 /** Empty, list, or table: one decision, made once. */
 const UsageBody = ({

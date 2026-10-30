@@ -10,6 +10,10 @@ const metricLabels: Record<string, string> = {
   public_network_transfer_bytes: "Public egress",
   private_network_transfer_bytes: "Private egress",
   extra_branches_month: "Extra branches",
+  functions_active_capacity_microseconds: "Functions active compute",
+  functions_waiting_capacity_microseconds: "Functions waiting compute",
+  functions_invocations: "Function invocations",
+  functions_egress_bytes: "Functions egress",
 };
 
 /**
@@ -82,7 +86,19 @@ const priceColumns: Array<{ header: string; metrics: string[] }> = [
   },
   {
     header: "EGRESS",
-    metrics: ["public_network_transfer_bytes", "private_network_transfer_bytes"],
+    metrics: [
+      "public_network_transfer_bytes",
+      "private_network_transfer_bytes",
+      "functions_egress_bytes",
+    ],
+  },
+  {
+    header: "FUNCTIONS",
+    metrics: [
+      "functions_active_capacity_microseconds",
+      "functions_waiting_capacity_microseconds",
+      "functions_invocations",
+    ],
   },
   { header: "BRANCHES", metrics: ["extra_branches_month"] },
 ];
@@ -199,8 +215,9 @@ export function renderPriceTable(
     ...(values.length > 0 ? values.map(line) : ["(no billable usage in this window)"]),
     widths.map((width) => "-".repeat(width)).join("  "),
     line(totalRow),
-    "",
-    `Excludes: ${estimate.exclusions.join(", ").replace(/_/g, " ")}`,
   ];
+  const approximations = [...new Set(estimate.lines.flatMap((line) => line.approximations))];
+  if (approximations.length > 0) output.push("", `Approximations: ${approximations.join(", ")}`);
+  output.push("", `Excludes: ${estimate.exclusions.join(", ").replace(/_/g, " ")}`);
   return `${output.join("\n")}\n`;
 }

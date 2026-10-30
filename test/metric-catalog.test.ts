@@ -80,6 +80,10 @@ describe("endpoint-aware metric definitions", () => {
       "public_network_transfer_bytes",
       "private_network_transfer_bytes",
       "extra_branches_month",
+      "functions_active_capacity_microseconds",
+      "functions_waiting_capacity_microseconds",
+      "functions_invocations",
+      "functions_egress_bytes",
     ]);
     expect(branchConsumptionMetrics).toEqual([
       "compute_unit_seconds",
@@ -117,6 +121,20 @@ describe("endpoint-aware metric definitions", () => {
     ["extra_branches_month", "branch_hour", 744n, "branch_month_before_allowance"],
     ["active_time_seconds", "second", 3600n, "active_hour"],
     ["written_data_bytes", "byte", 1_000_000_000n, "gb"],
+    [
+      "functions_active_capacity_microseconds",
+      "capacity_microsecond",
+      3_600_000_000n,
+      "capacity_hour",
+    ],
+    [
+      "functions_waiting_capacity_microseconds",
+      "capacity_microsecond",
+      3_600_000_000n,
+      "capacity_hour",
+    ],
+    ["functions_invocations", "invocation", 1_000_000n, "million_invocations"],
+    ["functions_egress_bytes", "byte", 1_000_000_000n, "gb"],
   ] as const)("preserves exact conversion for %s", (name, rawUnit, denominator, unit) => {
     expect(metricDefinitions[name]).toMatchObject({ rawUnit, denominator, derivedUnit: unit });
     expect(deriveBillingValue(name, (denominator * 3n).toString())).toEqual({
@@ -154,7 +172,9 @@ describe("shared metric presentation", () => {
     expect(dashboardMetrics).toBe(METRICS);
     expect(dashboardChartGroups).toBe(CHART_GROUPS);
     for (const [name, definition] of Object.entries(metricDefinitions)) {
-      expect(METRICS[name]?.divisor).toBe(Number(definition.denominator));
+      expect(METRICS[name]?.divisor).toBe(
+        name === "functions_invocations" ? 1 : Number(definition.denominator),
+      );
     }
     expect(metricInfo("root_branch_bytes_month")).toEqual({
       label: "Root storage",
@@ -162,7 +182,23 @@ describe("shared metric presentation", () => {
       divisor: 1e9,
     });
     expect(toDisplayValue("root_branch_bytes_month", "3360000000")).toBe(3.36);
-    expect(CHART_GROUPS.map((group) => group.id)).toEqual(["storage", "compute", "transfer"]);
+    expect(toDisplayValue("functions_invocations", "42")).toBe(42);
+    expect(metricInfo("functions_invocations")).toEqual({
+      label: "Function invocations",
+      unit: "invocations",
+      divisor: 1,
+    });
+    expect(metricInfo("functions_egress_bytes").label).toBe(
+      "Functions egress (uses public transfer allowance)",
+    );
+    expect(CHART_GROUPS.map((group) => group.id)).toEqual([
+      "storage",
+      "compute",
+      "transfer",
+      "functions-compute",
+      "functions-invocations",
+      "functions-egress",
+    ]);
   });
 });
 

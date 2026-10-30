@@ -81,6 +81,10 @@ export function renderUsageTable(overview: UsageOverview): string {
     `  Snapshot storage: ${displayTotal(overview, "snapshot_storage_bytes_month", "GB·mo")}`,
     `  Private egress: ${displayTotal(overview, "private_network_transfer_bytes", "GB")}`,
     `  Extra branches before allowance: ${displayTotal(overview, "extra_branches_month", "branch·mo")}`,
+    `  Functions active compute: ${displayTotal(overview, "functions_active_capacity_microseconds", "capacity·h")}`,
+    `  Functions waiting compute: ${displayTotal(overview, "functions_waiting_capacity_microseconds", "capacity·h")}`,
+    `  Function invocations: ${displayTotal(overview, "functions_invocations", "invocations")}`,
+    `  Functions egress (uses public transfer allowance): ${displayTotal(overview, "functions_egress_bytes", "GB")}`,
   ];
   if (overview.totals === null) {
     output.push("", "Warning: coverage is partial; organization totals are unavailable");
@@ -100,7 +104,10 @@ export function renderUsageTable(overview: UsageOverview): string {
 function displayTotal(overview: UsageOverview, name: string, unit: string): string {
   if (overview.totals === null) return "n/a";
   const metric = overview.totals.find((item) => item.name === name);
-  return metric ? `${formatDecimal(metric.derived.decimalApproximation)} ${unit}` : "n/a";
+  if (!metric) return "n/a";
+  const value =
+    name === "functions_invocations" ? metric.raw.value : metric.derived.decimalApproximation;
+  return `${formatDecimal(value)} ${unit}`;
 }
 
 function displayMetric(

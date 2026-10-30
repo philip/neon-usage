@@ -356,7 +356,7 @@ export default function App({ authorized = true }: { authorized?: boolean }) {
         name: total.name,
         label: metricInfo(total.name).label,
         unit: metricInfo(total.name).unit,
-        value: formatQuantity(Number(total.derived?.decimalApproximation ?? "0")),
+        value: formatQuantity(toDisplayValue(total.name, total.raw.value)),
       }));
   }, [freePlan, snapshot.data, live, derivedRows, usage.data]);
 

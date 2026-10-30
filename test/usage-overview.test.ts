@@ -117,6 +117,39 @@ describe("UsageOverviewService", () => {
     ]);
   });
 
+  it("presents Function invocations as counts in organization usage", async () => {
+    const source: ProjectConsumptionSource & OrganizationDirectorySource = {
+      getProjectPage: async () => ({
+        projects: [project("project-active", "0")],
+        nextCursor: null,
+      }),
+      listOrganizations: async () => [],
+      listProjectDirectory: async () => ({
+        projects: [{ id: "project-active", name: "Active Project" }],
+        unavailableProjectIds: [],
+      }),
+    };
+    const overview = await createUsageOverviewService(source, {
+      now: () => new Date("2026-08-09T12:00:00Z"),
+    }).overview({
+      organizationId: "org-1",
+      from: "2026-08-08T00:00:00Z",
+      to: "2026-08-09T00:00:00Z",
+      granularity: "daily",
+      metrics: ["functions_invocations"],
+    });
+
+    expect(overview.activeProjects[0]?.metrics).toEqual([
+      {
+        name: "functions_invocations",
+        rawValue: "42",
+        rawUnit: "invocation",
+        displayValue: "42",
+        displayUnit: "invocations",
+      },
+    ]);
+  });
+
   it.each([
     Object.assign(new Error("cancelled"), { kind: "cancelled" }),
     Object.assign(new Error("evidence failed"), { integrityFailure: true }),
@@ -158,6 +191,7 @@ function project(projectId: string, compute: string) {
             metrics: [
               sourceMetric("compute_unit_seconds", compute),
               sourceMetric("root_branch_bytes_month", "1000000000"),
+              sourceMetric("functions_invocations", "42"),
               sourceMetric("future_metric", "1000"),
             ],
           },

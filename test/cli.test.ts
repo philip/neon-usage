@@ -13,6 +13,7 @@ import { CliError } from "../src/errors.js";
 import { createOrganizationHistoryService } from "../src/history-report.js";
 import { parseMeasuredBillingUsage } from "../src/measured-usage-contract.js";
 import { deriveBillingValue } from "../src/metric-catalog.js";
+import { projectConsumptionMetrics } from "../src/metric-definitions.js";
 import type { UsageOverview } from "../src/usage-overview-service.js";
 
 describe("CLI project-report", () => {
@@ -109,16 +110,7 @@ describe("CLI project-report", () => {
     expect(receivedQuery?.organizationId).toBe("org-context");
     expect(receivedQuery?.projectIds).toEqual(["project-context"]);
     expect(receivedQuery?.granularity).toBe("daily");
-    expect(receivedQuery?.metrics).toEqual([
-      "compute_unit_seconds",
-      "root_branch_bytes_month",
-      "child_branch_bytes_month",
-      "instant_restore_bytes_month",
-      "snapshot_storage_bytes_month",
-      "public_network_transfer_bytes",
-      "private_network_transfer_bytes",
-      "extra_branches_month",
-    ]);
+    expect(receivedQuery?.metrics).toEqual(projectConsumptionMetrics);
     expect(receivedQuery?.from).toBe("2026-08-01T00:00:00.000Z");
     expect(receivedQuery?.to).toBe("2026-08-11T00:00:00.000Z");
   });
@@ -391,7 +383,7 @@ describe("CLI project-report", () => {
     });
 
     expect(receivedQuery?.organizationId).toBe("org-context");
-    expect(receivedQuery?.metrics).toHaveLength(8);
+    expect(receivedQuery?.metrics).toEqual(projectConsumptionMetrics);
     expect(JSON.parse(stdout)).toEqual(overview);
   });
 
@@ -1180,7 +1172,7 @@ describe("CLI demo mode", () => {
     const measured = parseMeasuredBillingUsage(JSON.parse(sink.read()));
     expect(measured.coverage.authoritative).toBe(true);
     expect(measured.metricSelection.mode).toBe("default");
-    expect(measured.metricSelection.requested).toHaveLength(8);
+    expect(measured.metricSelection.requested).toEqual([...projectConsumptionMetrics].sort());
   });
 
   it("preserves an embedded host exit code when demo dependencies omit a setter", async () => {

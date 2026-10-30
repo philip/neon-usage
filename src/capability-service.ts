@@ -88,6 +88,7 @@ const declaredPlanCapabilities: Record<
       ...unknownPlanCapabilities,
       projectHistory: "supported",
       branchHistory: "supported",
+      metricsExport: "supported",
     },
   },
   business: {

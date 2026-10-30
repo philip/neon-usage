@@ -67,10 +67,18 @@ describe("versioned history contracts", () => {
   });
 
   it("keeps contract-specific metrics distinct", () => {
-    expect(historyContracts.project.metrics).toContain("snapshot_storage_bytes_month");
-    expect(historyContracts.branch.metrics).not.toContain("snapshot_storage_bytes_month");
-    expect(historyContracts.project.supportedMetrics).toContain("snapshot_storage_bytes_month");
-    expect(historyContracts.branch.supportedMetrics).not.toContain("snapshot_storage_bytes_month");
+    for (const metric of [
+      "snapshot_storage_bytes_month",
+      "functions_active_capacity_microseconds",
+      "functions_waiting_capacity_microseconds",
+      "functions_invocations",
+      "functions_egress_bytes",
+    ] as const) {
+      expect(historyContracts.project.metrics).toContain(metric);
+      expect(historyContracts.branch.metrics).not.toContain(metric);
+      expect(historyContracts.project.supportedMetrics).toContain(metric);
+      expect(historyContracts.branch.supportedMetrics).not.toContain(metric);
+    }
   });
 
   it.each(["active_time_seconds", "written_data_bytes", "constructor"])(
